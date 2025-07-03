@@ -119,130 +119,174 @@ def query_stuck_orders():
     return """
         -- Use multiple Common Table Expressions (CTEs) to get store coordinates and then process user requests.
         WITH
-        base_latitude as (
-            select
-                ua.user_id,
-                ua.value as latitude
-            from giross_producao.user_attributes ua
-            inner join (select user_id, max(id) as id from giross_producao.user_attributes where attribute_id = 2 group by 1) ua1
-                on ua.id = ua1.id
-            where ua.attribute_id = 2
-        ),
-        base_longitude as (
-            select
-                ua.user_id,
-                ua.value as longitude
-            from giross_producao.user_attributes ua
-            inner join (select user_id, max(id) as id from giross_producao.user_attributes where attribute_id = 3 group by 1) ua1
-                on ua.id = ua1.id
-            where ua.attribute_id = 3
-        ),
-        user_requests_ AS (
-            SELECT
-                ur.estimated_total,
-                ur.id,
-                ur.provider_id,
-                ur.status,
-                ROUND(
-                    ur.estimated_total * (
-                        1 - (COALESCE(prl.percent, 20) / 100)
+base_latitude as (
+    select
+        ua.user_id,
+        ua.value as latitude
+    from giross_producao.user_attributes ua
+    inner join (select user_id, max(id) as id from giross_producao.user_attributes where attribute_id = 2 group by 1) ua1
+        on ua.id = ua1.id
+    where ua.attribute_id = 2
+),
+base_longitude as (
+    select
+        ua.user_id,
+        ua.value as longitude
+    from giross_producao.user_attributes ua
+    inner join (select user_id, max(id) as id from giross_producao.user_attributes where attribute_id = 3 group by 1) ua1
+        on ua.id = ua1.id
+    where ua.attribute_id = 3
+),
+user_requests_ AS (
+    SELECT
+        ur.estimated_total,
+        ur.id,
+        ur.provider_id,
+        ur.status,
+        -- Add the address column
+        ur.s_address,
+        ROUND(
+            ur.estimated_total * (
+                1 - (COALESCE(prl.percent, 20) / 100)
+            ),
+            2
+        ) AS amount,
+        CASE
+            WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
+            ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
+        END AS time_,
+        CASE
+            WHEN ur.scheduled_cod IS NULL THEN DATE(ur.original_created_at)
+            ELSE DATE(ur.started_at)
+        END AS creation_date_,
+        ur.user_id,
+        REGEXP_REPLACE(
+            TRIM(
+                REPLACE(
+                    REPLACE(
+                        CONCAT(u.first_name, ' ', u.last_name),
+                        'Integração ',
+                        ''
                     ),
-                    2
-                ) AS amount,
-                CASE
-                    WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
-                    ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
-                END AS time_,
-                CASE
-                    WHEN ur.scheduled_cod IS NULL THEN DATE(ur.original_created_at)
-                    ELSE DATE(ur.started_at)
-                END AS creation_date_,
-                ur.user_id,
-                REGEXP_REPLACE(
-                    TRIM(
-                        REPLACE(
-                            REPLACE(
-                                CONCAT(u.first_name, ' ', u.last_name),
-                                'Integração ',
-                                ''
-                            ),
-                            'Integracao',
-                            ''
-                        )
-                    ),
-                    ' - [A-Z ]+ - [A-Z]{2}$',
+                    'Integracao',
                     ''
-                ) AS user_name,
-                c.id AS city_id,
-                -- Add store latitude and longitude from the CTEs
-                blat.latitude AS store_latitude,
-                blon.longitude AS store_longitude
-            FROM
-                giross_producao.user_requests ur
-                LEFT JOIN giross_producao.user_request_delay_rules urdr ON urdr.type = 'USER'
-                    AND ur.user_id = urdr.value
-                    AND ur.original_created_at >= urdr.created_at
-                LEFT JOIN giross_producao.percentage_receipt_location prl ON prl.location_type = 'USER'
-                    AND ur.user_id = prl.value
-                    AND (
-                        CASE
-                            WHEN ur.integration_service LIKE '%Turbo%' THEN 'turbo'
-                            WHEN ur.integration_service LIKE '%d+1%' THEN 'd+1'
-                            WHEN (
-                                CASE
-                                    WHEN urdr.value IS NOT NULL
-                                    AND ur.integration_service IS NOT NULL
-                                    AND ur.schedule_at IS NOT NULL
-                                    AND ur.scheduled_cod IS NULL
-                                    AND ur.integration_service NOT LIKE '%d+1%' THEN 'Integrado - Delay'
-                                    WHEN ur.integration_service IS NOT NULL
-                                    AND ur.schedule_at IS NOT NULL
-                                    AND ur.scheduled_cod IS NULL THEN 'Integrado - Agendado'
-                                    WHEN ur.integration_service IS NOT NULL
-                                    AND ur.schedule_at IS NULL
-                                    AND ur.scheduled_cod IS NULL THEN 'Integrado - Nuvem'
-                                    WHEN ur.integration_service IS NOT NULL
-                                    AND ur.schedule_at IS NULL
-                                    AND ur.scheduled_cod IS NOT NULL THEN 'Integrado - Embarque Rápido'
-                                    WHEN ur.integration_service IS NULL
-                                    AND ur.schedule_at IS NOT NULL
-                                    AND ur.scheduled_cod IS NULL THEN 'Manual - Agendado'
-                                    WHEN ur.integration_service IS NULL
-                                    AND ur.schedule_at IS NULL
-                                    AND ur.scheduled_cod IS NULL THEN 'Manual - Nuvem'
-                                    WHEN ur.integration_service IS NULL
-                                    AND ur.schedule_at IS NULL
-                                    AND ur.scheduled_cod IS NOT NULL THEN 'Manual - Embarque Rápido'
-                                END
-                            ) LIKE '%Embarque Rápido%' THEN 'Embarque Rapido'
-                            ELSE 'Sem Modalidade'
-                        END
-                    ) = COALESCE(prl.integration_service, 'Sem Modalidade')
-                    AND ur.original_created_at BETWEEN prl.created_at AND COALESCE(prl.deleted_at, NOW())
-                LEFT JOIN giross_producao.cities c ON ur.city_id = c.id
-                LEFT JOIN giross_producao.users u ON ur.user_id = u.id
-                -- Join the location CTEs
-                LEFT JOIN base_latitude blat ON ur.user_id = blat.user_id
-                LEFT JOIN base_longitude blon ON ur.user_id = blon.user_id
-            WHERE
+                )
+            ),
+            ' - [A-Z ]+ - [A-Z]{2}$',
+            ''
+        ) AS user_name,
+        c.id AS city_id,
+        -- Add store latitude and longitude from the CTEs
+        blat.latitude AS store_latitude,
+        blon.longitude AS store_longitude
+    FROM
+        giross_producao.user_requests ur
+        LEFT JOIN giross_producao.user_request_delay_rules urdr ON urdr.type = 'USER'
+            AND ur.user_id = urdr.value
+            AND ur.original_created_at >= urdr.created_at
+        LEFT JOIN giross_producao.percentage_receipt_location prl ON prl.location_type = 'USER'
+            AND ur.user_id = prl.value
+            AND (
                 CASE
-                    WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
-                    ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
-                END >= 3
-                AND ur.status = 'SEARCHING'
-                AND ur.provider_id IN (0, 1266)
-                AND DATE(
-                    COALESCE(ur.original_created_at, ur.started_at)
-                ) >= CURDATE() - INTERVAL 7 DAY -- Looking at the last 7 days
+                    WHEN ur.integration_service LIKE '%Turbo%' THEN 'turbo'
+                    WHEN ur.integration_service LIKE '%d+1%' THEN 'd+1'
+                    WHEN (
+                        CASE
+                            WHEN urdr.value IS NOT NULL
+                            AND ur.integration_service IS NOT NULL
+                            AND ur.schedule_at IS NOT NULL
+                            AND ur.scheduled_cod IS NULL
+                            AND ur.integration_service NOT LIKE '%d+1%' THEN 'Integrado - Delay'
+                            WHEN ur.integration_service IS NOT NULL
+                            AND ur.schedule_at IS NOT NULL
+                            AND ur.scheduled_cod IS NULL THEN 'Integrado - Agendado'
+                            WHEN ur.integration_service IS NOT NULL
+                            AND ur.schedule_at IS NULL
+                            AND ur.scheduled_cod IS NULL THEN 'Integrado - Nuvem'
+                            WHEN ur.integration_service IS NOT NULL
+                            AND ur.schedule_at IS NULL
+                            AND ur.scheduled_cod IS NOT NULL THEN 'Integrado - Embarque Rápido'
+                            WHEN ur.integration_service IS NULL
+                            AND ur.schedule_at IS NOT NULL
+                            AND ur.scheduled_cod IS NULL THEN 'Manual - Agendado'
+                            WHEN ur.integration_service IS NULL
+                            AND ur.schedule_at IS NULL
+                            AND ur.scheduled_cod IS NULL THEN 'Manual - Nuvem'
+                            WHEN ur.integration_service IS NULL
+                            AND ur.schedule_at IS NULL
+                            AND ur.scheduled_cod IS NOT NULL THEN 'Manual - Embarque Rápido'
+                        END
+                    ) LIKE '%Embarque Rápido%' THEN 'Embarque Rapido'
+                    ELSE 'Sem Modalidade'
+                END
+            ) = COALESCE(prl.integration_service, 'Sem Modalidade')
+            AND ur.original_created_at BETWEEN prl.created_at AND COALESCE(prl.deleted_at, NOW())
+        LEFT JOIN giross_producao.cities c ON ur.city_id = c.id
+        LEFT JOIN giross_producao.users u ON ur.user_id = u.id
+        -- Join the location CTEs
+        LEFT JOIN base_latitude blat ON ur.user_id = blat.user_id
+        LEFT JOIN base_longitude blon ON ur.user_id = blon.user_id
+    WHERE
+        CASE
+            WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
+            ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
+        END >= 1
+        AND ur.status = 'SEARCHING'
+        AND ur.provider_id IN (0, 1266)
+        AND DATE(
+            COALESCE(ur.original_created_at, ur.started_at)
+        ) = CURDATE()
+)
+SELECT
+    id AS order_id,
+    user_id,
+    user_name,
+    s_address AS address,
+    amount AS value,
+    city_id,
+    store_latitude,
+    store_longitude
+FROM
+    user_requests_;
+    """
+
+def query_available_providers():
+    """
+    Returns a SQL query that retrieves all online providers, ranked by their
+    reliability (low releases) and score.
+    """
+    return """
+        -- Use a CTE to gather the total releases for each provider.
+        WITH
+        provider_releases AS (
+            SELECT
+                provider_id,
+                COUNT(id) AS total_releases
+            FROM
+                giross_producao.provider_cancelled_user_requests
+            GROUP BY
+                1
         )
+        -- Final SELECT to join all provider data and display their key information.
         SELECT
-            id AS order_id,
-            user_id,
-            user_name,
-            amount AS value,
-            city_id,
-            store_latitude,
-            store_longitude
+            p.id AS provider_id,
+            CONCAT(p.first_name, ' ', p.last_name) AS provider_name,
+            p.mobile,
+            ps.status AS online_status,
+            p.latitude,
+            p.longitude,
+            score.score,
+            COALESCE(pr.total_releases, 0) AS total_releases
         FROM
-            user_requests_;
+            giross_producao.providers p
+            -- Join to get only online providers
+            INNER JOIN giross_producao.provider_services ps ON p.id = ps.provider_id AND ps.status IN ('active', 'riding')
+            -- Join to get provider scores
+            LEFT JOIN giross_producao.provider_scores score ON p.id = score.provider_id
+            -- Join to get provider releases
+            LEFT JOIN provider_releases pr ON p.id = pr.provider_id
+        ORDER BY
+            -- Rank providers by the most reliable first
+            total_releases ASC,
+            score DESC;
     """
