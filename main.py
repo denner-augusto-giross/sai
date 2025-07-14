@@ -9,15 +9,13 @@ from query import query_stuck_orders, query_available_providers
 from geopy.distance import geodesic
 import pandas as pd
 
-# --- ID da Cidade para Produção ---
+# As constantes permanecem no topo
 CITY_ID_PRODUCAO = 50
-DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a"
+DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
 
 def run_offer_workflow(chat_number, match_data):
-    """
-    Executa o fluxo completo para enviar uma oferta de corrida.
-    """
-    # ... (esta função permanece exatamente a mesma)
+    """Executa o fluxo completo para enviar uma oferta de corrida."""
+    # Esta função permanece exatamente a mesma
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
     chat_account_id = os.getenv("CHAT_GURU_ACCOUNT_ID")
@@ -30,11 +28,9 @@ def run_offer_workflow(chat_number, match_data):
 
     api = ChatguruWABA(chat_key, chat_account_id, chat_phone_id, chat_url)
     
-    # Etapa 1: Registrar o Chat
     print(f"Etapa 1: Registrando chat com o número {chat_number}...")
     api.register_chat(chat_number, match_data.get("provider_name", "Novo Provedor"))
 
-    # Etapa 2: Atualizar Campos Personalizados
     order_id = str(match_data.get('order_id'))
     provider_id = str(match_data.get('provider_id'))
     
@@ -45,25 +41,24 @@ def run_offer_workflow(chat_number, match_data):
     print("Aguardando 2 segundos para sincronização...")
     sleep(2)
 
-    # Etapa 3: Executar o Diálogo
     if DIALOG_ID_PARA_OFERTA:
         print(f"Etapa 3: Executando diálogo '{DIALOG_ID_PARA_OFERTA}' para enviar a oferta...")
         dialog_response = api.execute_dialog(chat_number, DIALOG_ID_PARA_OFERTA)
         print(f"Resposta da Execução do Diálogo para {chat_number}:", dialog_response)
 
 
-if __name__ == "__main__":
+# --- NOVA FUNÇÃO AQUI ---
+def execute_sai_logic():
+    """
+    Encapsula toda a lógica de busca e oferta que estava no `if __name__ == "__main__"`.
+    """
+    print(f"\n--- A INICIAR LÓGICA DO SAI PARA A CIDADE ID: {CITY_ID_PRODUCAO} ---")
     
-    print(f"--- A INICIAR SAI PARA A CIDADE ID: {CITY_ID_PRODUCAO} ---")
-    
-    # --- MUDANÇA IMPORTANTE PARA PRODUÇÃO ---
-    # Passamos o ID da cidade diretamente para as funções de query.
     stuck_orders_df = read_data_from_db(query_stuck_orders(CITY_ID_PRODUCAO))
     providers_df = read_data_from_db(query_available_providers(CITY_ID_PRODUCAO))
 
-    # A lógica de correspondência e envio permanece a mesma...
     if stuck_orders_df is not None and not stuck_orders_df.empty and providers_df is not None and not providers_df.empty:
-        # ... (código para criar best_matches_df)
+        # ... (toda a lógica para criar best_matches_df permanece a mesma)
         stuck_orders_df.dropna(subset=['store_latitude', 'store_longitude'], inplace=True)
         providers_df.dropna(subset=['latitude', 'longitude'], inplace=True)
         stuck_orders_df['store_latitude'] = pd.to_numeric(stuck_orders_df['store_latitude'])
@@ -101,3 +96,8 @@ if __name__ == "__main__":
             print(f"Nenhum provedor encontrado dentro de um raio de 10km para a cidade {CITY_ID_PRODUCAO}.")
     else:
         print(f"\nNão foram encontradas corridas travadas ou provedores disponíveis para a cidade {CITY_ID_PRODUCAO}.")
+
+
+if __name__ == "__main__":
+    # Agora, se executarmos 'python main.py', ele apenas executa a lógica uma vez para teste.
+    execute_sai_logic()
