@@ -1,0 +1,19 @@
+# Dockerfile.worker
+
+# 1. Usar uma imagem base oficial e leve do Python
+FROM python:3.11-slim
+
+# 2. Definir o diretório de trabalho dentro do container
+WORKDIR /app
+
+# 3. Copiar o ficheiro de dependências primeiro
+COPY requirements.txt .
+
+# 4. Instalar as dependências do projeto
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 5. Copiar todos os outros ficheiros do projeto
+COPY . .
+
+# 6. O comando para iniciar o worker agendado
+CMD ["python", "worker.py"]
