@@ -9,12 +9,15 @@ from query import query_stuck_orders, query_available_providers
 from geopy.distance import geodesic
 import pandas as pd
 
+# --- ID da Cidade para Produção ---
+CITY_ID_PRODUCAO = 50
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a"
 
 def run_offer_workflow(chat_number, match_data):
     """
-    Executa o fluxo completo: registra, atualiza campos e envia a oferta.
+    Executa o fluxo completo para enviar uma oferta de corrida.
     """
+    # ... (esta função permanece exatamente a mesma)
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
     chat_account_id = os.getenv("CHAT_GURU_ACCOUNT_ID")
@@ -50,10 +53,15 @@ def run_offer_workflow(chat_number, match_data):
 
 
 if __name__ == "__main__":
-    # A lógica para encontrar a melhor correspondência permanece a mesma
-    stuck_orders_df = read_data_from_db(query_stuck_orders())
-    providers_df = read_data_from_db(query_available_providers())
+    
+    print(f"--- A INICIAR SAI PARA A CIDADE ID: {CITY_ID_PRODUCAO} ---")
+    
+    # --- MUDANÇA IMPORTANTE PARA PRODUÇÃO ---
+    # Passamos o ID da cidade diretamente para as funções de query.
+    stuck_orders_df = read_data_from_db(query_stuck_orders(CITY_ID_PRODUCAO))
+    providers_df = read_data_from_db(query_available_providers(CITY_ID_PRODUCAO))
 
+    # A lógica de correspondência e envio permanece a mesma...
     if stuck_orders_df is not None and not stuck_orders_df.empty and providers_df is not None and not providers_df.empty:
         # ... (código para criar best_matches_df)
         stuck_orders_df.dropna(subset=['store_latitude', 'store_longitude'], inplace=True)
@@ -78,23 +86,18 @@ if __name__ == "__main__":
         )
         best_matches_df = nearby_providers_df.groupby('order_id').first().reset_index()
 
-        # --- MUDANÇA IMPORTANTE PARA PRODUÇÃO ---
         if not best_matches_df.empty:
             print(f"\nEncontrados {len(best_matches_df)} melhores provedores. A iniciar o fluxo de ofertas...")
-            # Itera sobre cada melhor correspondência encontrada
             for index, match in best_matches_df.iterrows():
-                # Converte a linha do match para um dicionário
                 match_data = match.to_dict()
-                # Usa o número de celular real do provedor
                 provider_phone_number = match_data.get('mobile')
 
                 if provider_phone_number:
-                    # Inicia o fluxo de trabalho para este provedor
                     run_offer_workflow(provider_phone_number, match_data)
                     print("-" * 50)
                 else:
                     print(f"AVISO: Não foi possível encontrar o número de celular para o provedor ID {match_data.get('provider_id')}. A pular.")
         else:
-            print("Nenhum provedor encontrado dentro de um raio de 10km.")
+            print(f"Nenhum provedor encontrado dentro de um raio de 10km para a cidade {CITY_ID_PRODUCAO}.")
     else:
-        print("\nNão foi possível realizar a correspondência.")
+        print(f"\nNão foram encontradas corridas travadas ou provedores disponíveis para a cidade {CITY_ID_PRODUCAO}.")

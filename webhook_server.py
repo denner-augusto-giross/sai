@@ -15,7 +15,7 @@ def find_next_provider_and_send_offer(order_id, rejected_provider_id):
     """Placeholder para a lógica de encontrar o próximo melhor provedor."""
     print(f"\nAVISO: O provedor {rejected_provider_id} rejeitou a ordem {order_id}.")
     print("A lógica para encontrar o próximo provedor precisa ser implementada aqui.")
-    # Este será o seu próximo grande desafio de desenvolvimento!
+    # Em desenvolvimento
     pass
 
 @app.route('/webhook', methods=['POST'])
