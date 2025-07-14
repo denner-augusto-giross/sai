@@ -264,6 +264,9 @@ def query_available_providers():
                 COUNT(id) AS total_releases
             FROM
                 giross_producao.provider_cancelled_user_requests
+            WHERE
+                -- Filter for releases that occurred in the last 14 days.
+                created_at >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
             GROUP BY
                 1
         )
@@ -276,17 +279,17 @@ def query_available_providers():
             p.latitude,
             p.longitude,
             score.score,
-            COALESCE(pr.total_releases, 0) AS total_releases
+            COALESCE(pr.total_releases, 0) AS total_releases_last_2_weeks
         FROM
             giross_producao.providers p
             -- Join to get only online providers
             INNER JOIN giross_producao.provider_services ps ON p.id = ps.provider_id AND ps.status IN ('active', 'riding')
             -- Join to get provider scores
             LEFT JOIN giross_producao.provider_scores score ON p.id = score.provider_id
-            -- Join to get provider releases
+            -- Join to get provider releases from the last 2 weeks
             LEFT JOIN provider_releases pr ON p.id = pr.provider_id
         ORDER BY
             -- Rank providers by the most reliable first
-            total_releases ASC,
+            total_releases_last_2_weeks ASC,
             score DESC;
     """
