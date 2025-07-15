@@ -14,9 +14,9 @@ CITY_ID_PRODUCAO = 50
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
 AVG_SPEED_KMH = 25
 
-def run_offer_workflow(chat_number, match_data, custom_fields_data):
+def run_offer_workflow(chat_number, match_data, template_params):
     """
-    Executa o fluxo completo, atualizando todos os campos necessários antes de enviar.
+    Executa o fluxo completo para enviar uma oferta de corrida.
     """
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
@@ -30,19 +30,17 @@ def run_offer_workflow(chat_number, match_data, custom_fields_data):
 
     api = ChatguruWABA(chat_key, chat_account_id, chat_phone_id, chat_url)
     
-    print(f"Etapa 1: Registrando chat com o número {chat_number}...")
+    print(f"Etapa 1: Registrando e atualizando campos para {chat_number}...")
     api.register_chat(chat_number, match_data.get("provider_name", "Novo Provedor"))
-
-    print(f"Etapa 2: Atualizando campos para o chat {chat_number}...")
-    api.update_custom_fields(chat_number, custom_fields_data)
+    custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
+    api.update_custom_fields(chat_number, custom_fields)
 
     print("Aguardando 2 segundos para sincronização...")
     sleep(2)
 
     if DIALOG_ID_PARA_OFERTA:
-        print(f"Etapa 3: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
-        # A chamada correta, com apenas os argumentos necessários
-        dialog_response = api.execute_dialog(chat_number, DIALOG_ID_PARA_OFERTA)
+        print(f"Etapa 2: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
+        dialog_response = api.execute_dialog(chat_number, DIALOG_ID_PARA_OFERTA, template_params)
         print(f"Resposta da Execução do Diálogo para {chat_number}:", dialog_response)
 
 
@@ -57,7 +55,6 @@ if __name__ == "__main__":
     providers_df = read_data_from_db(query_available_providers())
 
     if stuck_orders_df is not None and not stuck_orders_df.empty and providers_df is not None and not providers_df.empty:
-        # Lógica de combinação e cálculo...
         stuck_orders_df.dropna(subset=['store_latitude', 'store_longitude'], inplace=True)
         providers_df.dropna(subset=['latitude', 'longitude'], inplace=True)
         stuck_orders_df['store_latitude'] = pd.to_numeric(stuck_orders_df['store_latitude'])
@@ -93,25 +90,29 @@ if __name__ == "__main__":
                 match_data = match.to_dict()
                 
                 try:
-                    # Construção do dicionário de campos personalizados
-                    custom_fields_payload = {
-                        "order_id": str(match_data.get('order_id')),
-                        "provider_id": str(match_data.get('provider_id')),
-                        "valor_corrida": f"{match_data.get('value', 'N/D'):.2f}",
-                        "endereco_coleta": match_data.get('user_name', 'N/D'),
-                        "distancia_ate_loja": f"~{match_data.get('distance_km', 0):.1f} km",
-                        "tempo_ate_loja": f"~{int((match_data.get('distance_km', 0) / AVG_SPEED_KMH) * 60)} min",
-                        "distancia_corrida_km": "[Distância N/D]",
-                        "eta_corrida_total": "[ETA N/D]"
-                    }
+                    # --- CORREÇÃO FINAL AQUI ---
+                    
+                    # Parâmetros 1 e 2 são buscados diretamente, já formatados pela query.
+                    param1 = match_data.get('param1_valor', '💰 Valor da Corrida: N/D')
+                    param2 = match_data.get('param2_endereco', '📍 Endereço de Coleta: N/D')
+                    
+                    # Parâmetros 3 e 4 são calculados e formatados aqui.
+                    dist_to_store = match_data.get('distance_km', 0)
+                    eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
+                    param3 = f"Sua Situação:\n- Distância até a coleta: ~{dist_to_store:.1f} km\n- Tempo estimado até a coleta: ~{eta_to_store} min"
 
+                    store_to_delivery_dist = match_data.get('store_to_delivery_distance', 0)
+                    total_dist = dist_to_store + store_to_delivery_dist
+                    total_eta = int((total_dist / AVG_SPEED_KMH) * 60)
+                    param4 = f"Detalhes da Entrega:\n- Percurso total da corrida: ~{total_dist:.1f} km\n- Tempo estimado total (coleta + entrega): ~{total_eta} min"
+                    
+                    template_params = [param1, param2, param3, param4]
+                    
                     recipient_phone_number = args.numero_teste if args.numero_teste else match_data.get('mobile')
                     
                     if recipient_phone_number:
-                        run_offer_workflow(recipient_phone_number, match_data, custom_fields_payload)
+                        run_offer_workflow(recipient_phone_number, match_data, template_params)
                         print("-" * 50)
                 
                 except Exception as e:
                     print(f"ERRO ao processar o match para a ordem {match_data.get('order_id')}: {e}")
-        else:
-            print("Nenhum provedor foi encontrado.")

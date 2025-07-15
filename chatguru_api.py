@@ -4,9 +4,6 @@ import requests
 import json
 
 class ChatguruWABA:
-    """
-    Classe para interagir com a API do Chatguru, seguindo o fluxo WABA.
-    """
     def __init__(self, key, account_id, phone_id, url):
         self.base_url = url
         self.base_params = {
@@ -16,7 +13,6 @@ class ChatguruWABA:
         }
 
     def _send_request(self, params):
-        """Função auxiliar para enviar requisições POST."""
         try:
             response = requests.post(self.base_url, data=params, timeout=20)
             response.raise_for_status()
@@ -27,7 +23,6 @@ class ChatguruWABA:
             return {"error": f"Erro de Requisição: {e}"}
 
     def register_chat(self, chat_number, user_name="Novo Lead"):
-        """Etapa 1: Cadastrar um novo chat."""
         params = self.base_params.copy()
         params.update({
             "action": "chat_add", "chat_number": chat_number,
@@ -36,7 +31,6 @@ class ChatguruWABA:
         return self._send_request(params)
 
     def update_custom_fields(self, chat_number, fields_to_update: dict):
-        """Etapa 2: Atualizar campos personalizados para um chat."""
         params = self.base_params.copy()
         params.update({
             "action": "chat_update_custom_fields",
@@ -46,15 +40,17 @@ class ChatguruWABA:
             params[f"field__{key}"] = value
         return self._send_request(params)
 
-    def execute_dialog(self, chat_number, dialog_id):
+    # --- FUNÇÃO CORRIGIDA ---
+    def execute_dialog(self, chat_number, dialog_id, template_params: list):
         """
-        Etapa 3: Executa um diálogo. O diálogo irá usar os campos personalizados
-        que já foram guardados no chat.
+        Executa um diálogo e envia os parâmetros para o template.
         """
         params = self.base_params.copy()
         params.update({
             "action": "dialog_execute",
             "dialog_id": dialog_id,
             "chat_number": chat_number,
+            # Adiciona os parâmetros do template ao payload
+            "params": json.dumps(template_params)
         })
         return self._send_request(params)

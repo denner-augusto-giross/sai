@@ -1,9 +1,7 @@
-# query.py
-
 def query_stuck_orders(city_id: int):
     """
     Retorna uma query SQL que encontra todas as corridas "travadas"
-    para uma cidade específica.
+    para uma cidade específica, incluindo o endereço completo da loja.
     """
     return f"""
         WITH
@@ -29,33 +27,27 @@ def query_stuck_orders(city_id: int):
             SELECT
                 ur.id,
                 ur.user_id,
-                ur.estimated_total,
                 ur.provider_id,
-                ur.status,
-                ROUND(
-                    ur.estimated_total * (
-                        1 - (COALESCE(prl.percent, 20) / 100)
-                    ),
-                    2
-                ) AS amount,
-                REGEXP_REPLACE(
-                    TRIM(
-                        REPLACE(
-                            REPLACE(
-                                CONCAT(u.first_name, ' ', u.last_name),
-                                'Integração ',
-                                ''
-                            ),
-                            'Integracao',
-                            ''
-                        )
-                    ),
-                    ' - [A-Z ]+ - [A-Z]{{2}}$',
-                    ''
-                ) AS user_name,
                 c.id AS city_id,
                 blat.latitude AS store_latitude,
-                blon.longitude AS store_longitude
+                blon.longitude AS store_longitude,
+                ur.distance as store_to_delivery_distance,
+                
+                CONCAT('💰 Valor da Corrida: R$ ', FORMAT(
+                    ROUND(ur.estimated_total * (1 - (COALESCE(prl.percent, 20) / 100)), 2),
+                    2,
+                    'de_DE'
+                )) AS param1_valor,
+
+                CONCAT('📍 Endereço de Coleta: ', 
+                    REGEXP_REPLACE(
+                        TRIM(REPLACE(REPLACE(CONCAT(u.first_name, ' ', u.last_name), 'Integração ', ''), 'Integracao', '')),
+                        ' - [A-Z ]+ - [A-Z]{{2}}$', ''
+                    ),
+                    ' - ',
+                    ur.s_address
+                ) AS param2_endereco
+
             FROM
                 giross_producao.user_requests ur
                 LEFT JOIN giross_producao.user_request_delay_rules urdr ON urdr.type = 'USER'
@@ -83,20 +75,17 @@ def query_stuck_orders(city_id: int):
         SELECT
             id AS order_id,
             user_id,
-            user_name,
-            amount AS value,
             city_id,
             store_latitude,
-            store_longitude
+            store_longitude,
+            store_to_delivery_distance,
+            param1_valor,
+            param2_endereco
         FROM
             user_requests_;
     """
 
 def query_available_providers():
-    """
-    Retorna uma query SQL que busca TODOS os provedores disponíveis,
-    independentemente da cidade. O filtro geográfico será feito no Python.
-    """
     return f"""
         WITH
         provider_releases AS (
