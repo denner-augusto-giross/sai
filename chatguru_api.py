@@ -46,17 +46,15 @@ class ChatguruWABA:
             params[f"field__{key}"] = value
         return self._send_request(params)
 
-    # --- FUNÇÃO CORRIGIDA AQUI ---
-    def execute_dialog(self, chat_number, dialog_id, template_params: list):
+    def execute_dialog(self, chat_number, dialog_id):
         """
-        Etapa 3: Executa um diálogo e envia os parâmetros para o template.
+        Etapa 3: Executa um diálogo. O diálogo irá usar os campos personalizados
+        que já foram guardados no chat.
         """
         params = self.base_params.copy()
         params.update({
             "action": "dialog_execute",
             "dialog_id": dialog_id,
             "chat_number": chat_number,
-            # Adiciona os parâmetros do template ao payload da requisição
-            "params": json.dumps(template_params)
         })
         return self._send_request(params)
