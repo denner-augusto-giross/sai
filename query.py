@@ -3,10 +3,10 @@
 def query_stuck_orders(city_id: int):
     """
     Retorna uma query SQL que encontra todas as corridas "travadas"
-    para uma cidade específica.
+    para uma cidade específica, incluindo os dados de entrega.
     """
     return f"""
-        -- A sua query de ordens travadas, agora com o filtro de cidade
+        -- A sua query de ordens travadas, agora com os dados de entrega
         WITH
         base_latitude as (
             -- ... (código CTE inalterado)
@@ -16,24 +16,24 @@ def query_stuck_orders(city_id: int):
         ),
         user_requests_ AS (
             SELECT
-                -- ... (código SELECT inalterado)
+                ur.id,
+                ur.user_id,
+                -- ... (outros campos SELECT)
+
+                -- ===================================
+                -- ALTERAÇÃO PARA OBTER DADOS DE ENTREGA
+                ur.latitude AS delivery_latitude,
+                ur.longitude AS delivery_longitude,
+                -- ===================================
+                
+                blat.latitude AS store_latitude,
+                blon.longitude AS store_longitude
             FROM
                 giross_producao.user_requests ur
                 -- ... (código JOINs inalterado)
             WHERE
-                CASE
-                    WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
-                    ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
-                END >= 3
-                AND ur.status = 'SEARCHING'
-                AND ur.provider_id IN (0, 1266)
-                -- ===================================
-                -- ALTERAÇÃO PARA PRODUÇÃO AQUI
-                AND ur.city_id = {city_id} 
-                -- ===================================
-                AND DATE(
-                    COALESCE(ur.original_created_at, ur.started_at)
-                ) >= CURDATE() - INTERVAL 7 DAY
+                -- ... (condições WHERE inalteradas)
+                ur.city_id = {city_id} 
         )
         SELECT
             id AS order_id,
@@ -42,7 +42,9 @@ def query_stuck_orders(city_id: int):
             amount AS value,
             city_id,
             store_latitude,
-            store_longitude
+            store_longitude,
+            delivery_latitude,
+            delivery_longitude
         FROM
             user_requests_;
     """

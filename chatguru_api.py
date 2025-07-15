@@ -59,3 +59,19 @@ class ChatguruWABA:
             "chat_number": chat_number
         })
         return self._send_request(params)
+    
+    def execute_dialog_with_template(self, chat_number, dialog_id, template_name, language_code, params_list):
+        """
+        Executa um diálogo que, por sua vez, envia um template da Meta preenchido.
+        """
+        params = self.base_params.copy()
+        params.update({
+            "action": "dialog_execute",
+            "dialog_id": dialog_id,
+            "chat_number": chat_number,
+            # Passando os parâmetros do template para a chamada de diálogo
+            "name": template_name,
+            "language": language_code,
+            "params": json.dumps(params_list)
+        })
+        return self._send_request(params)

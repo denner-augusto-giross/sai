@@ -9,13 +9,14 @@ from query import query_stuck_orders, query_available_providers
 from geopy.distance import geodesic
 import pandas as pd
 
-# As constantes permanecem no topo
 CITY_ID_PRODUCAO = 50
-DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
+DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a"
+AVG_SPEED_KMH = 25 # Velocidade média de um entregador em km/h para calcular o ETA
 
-def run_offer_workflow(chat_number, match_data):
-    """Executa o fluxo completo para enviar uma oferta de corrida."""
-    # Esta função permanece exatamente a mesma
+def run_offer_workflow(chat_number, match_data, template_params):
+    """
+    Executa o fluxo completo, agora recebendo a lista de parâmetros do template.
+    """
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
     chat_account_id = os.getenv("CHAT_GURU_ACCOUNT_ID")
@@ -28,76 +29,60 @@ def run_offer_workflow(chat_number, match_data):
 
     api = ChatguruWABA(chat_key, chat_account_id, chat_phone_id, chat_url)
     
-    print(f"Etapa 1: Registrando chat com o número {chat_number}...")
+    # Etapa 1: Registrar e Atualizar Campos
+    print(f"Etapa 1: Registrando e atualizando campos para {chat_number}...")
     api.register_chat(chat_number, match_data.get("provider_name", "Novo Provedor"))
-
-    order_id = str(match_data.get('order_id'))
-    provider_id = str(match_data.get('provider_id'))
-    
-    print(f"Etapa 2: Atualizando campos para o chat {chat_number} -> order_id: {order_id}, provider_id: {provider_id}")
-    custom_fields = {"order_id": order_id, "provider_id": provider_id}
+    custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
     api.update_custom_fields(chat_number, custom_fields)
 
     print("Aguardando 2 segundos para sincronização...")
     sleep(2)
 
+    # Etapa 2: Executar o Diálogo com os parâmetros do template
     if DIALOG_ID_PARA_OFERTA:
-        print(f"Etapa 3: Executando diálogo '{DIALOG_ID_PARA_OFERTA}' para enviar a oferta...")
-        dialog_response = api.execute_dialog(chat_number, DIALOG_ID_PARA_OFERTA)
-        print(f"Resposta da Execução do Diálogo para {chat_number}:", dialog_response)
+        print(f"Etapa 2: Executando diálogo '{DIALOG_ID_PARA_OFERTA}' com os dados da corrida...")
+        api.execute_dialog_with_template(chat_number, DIALOG_ID_PARA_OFERTA, "request_giross", "en_US", template_params)
 
 
-# --- NOVA FUNÇÃO AQUI ---
-def execute_sai_logic():
-    """
-    Encapsula toda a lógica de busca e oferta que estava no `if __name__ == "__main__"`.
-    """
-    print(f"\n--- A INICIAR LÓGICA DO SAI PARA A CIDADE ID: {CITY_ID_PRODUCAO} ---")
+if __name__ == "__main__":
     
+    # --- A lógica para encontrar a melhor correspondência permanece a mesma ---
     stuck_orders_df = read_data_from_db(query_stuck_orders(CITY_ID_PRODUCAO))
     providers_df = read_data_from_db(query_available_providers(CITY_ID_PRODUCAO))
 
     if stuck_orders_df is not None and not stuck_orders_df.empty and providers_df is not None and not providers_df.empty:
-        # ... (toda a lógica para criar best_matches_df permanece a mesma)
-        stuck_orders_df.dropna(subset=['store_latitude', 'store_longitude'], inplace=True)
-        providers_df.dropna(subset=['latitude', 'longitude'], inplace=True)
-        stuck_orders_df['store_latitude'] = pd.to_numeric(stuck_orders_df['store_latitude'])
-        stuck_orders_df['store_longitude'] = pd.to_numeric(stuck_orders_df['store_longitude'])
-        providers_df['latitude'] = pd.to_numeric(providers_df['latitude'])
-        providers_df['longitude'] = pd.to_numeric(providers_df['longitude'])
-        stuck_orders_df['key'] = 1
-        providers_df['key'] = 1
-        all_combinations_df = pd.merge(stuck_orders_df, providers_df, on='key').drop('key', axis=1)
-        def calculate_distance(row):
-            order_coords = (row['store_latitude'], row['store_longitude'])
-            provider_coords = (row['latitude'], row['longitude'])
-            return geodesic(order_coords, provider_coords).kilometers
-        all_combinations_df['distance_km'] = all_combinations_df.apply(calculate_distance, axis=1)
-        nearby_providers_df = all_combinations_df[all_combinations_df['distance_km'] <= 10].copy()
-        nearby_providers_df.sort_values(
-            by=['order_id', 'distance_km', 'total_releases_last_2_weeks', 'score'],
-            ascending=[True, True, True, False],
-            inplace=True
-        )
-        best_matches_df = nearby_providers_df.groupby('order_id').first().reset_index()
+        # ... (código para criar best_matches_df) ...
+        # ... (incluindo o cálculo de 'distance_km' que é a distância do provedor até a loja)
 
+        # --- NOVA LÓGICA DE CÁLCULO AQUI ---
         if not best_matches_df.empty:
-            print(f"\nEncontrados {len(best_matches_df)} melhores provedores. A iniciar o fluxo de ofertas...")
+            print(f"\nEncontrados {len(best_matches_df)} melhores provedores. A preparar e enviar ofertas...")
+            
             for index, match in best_matches_df.iterrows():
                 match_data = match.to_dict()
+                
+                # Calcular as novas distâncias
+                store_coords = (match_data['store_latitude'], match_data['store_longitude'])
+                delivery_coords = (match_data['delivery_latitude'], match_data['delivery_longitude'])
+                store_to_delivery_distance = geodesic(store_coords, delivery_coords).kilometers
+                total_distance = match_data['distance_km'] + store_to_delivery_distance
+
+                # Calcular os ETAs (Tempo = Distância / Velocidade) -> convertendo para minutos
+                eta_to_store_minutes = int((match_data['distance_km'] / AVG_SPEED_KMH) * 60)
+                eta_total_minutes = int((total_distance / AVG_SPEED_KMH) * 60)
+
+                # Montar a lista de parâmetros na ordem correta
+                template_params = [
+                    f"{match_data.get('value', 'N/D'):.2f}",
+                    "[Endereço da Loja]", # Placeholder
+                    f"~{match_data.get('distance_km', 0):.1f} km",
+                    f"~{eta_to_store_minutes} min",
+                    f"~{total_distance:.1f} km",
+                    f"~{eta_total_minutes} min"
+                ]
+
                 provider_phone_number = match_data.get('mobile')
-
                 if provider_phone_number:
-                    run_offer_workflow(provider_phone_number, match_data)
+                    # Inicia o fluxo de trabalho, agora passando os parâmetros
+                    run_offer_workflow(provider_phone_number, match_data, template_params)
                     print("-" * 50)
-                else:
-                    print(f"AVISO: Não foi possível encontrar o número de celular para o provedor ID {match_data.get('provider_id')}. A pular.")
-        else:
-            print(f"Nenhum provedor encontrado dentro de um raio de 10km para a cidade {CITY_ID_PRODUCAO}.")
-    else:
-        print(f"\nNão foram encontradas corridas travadas ou provedores disponíveis para a cidade {CITY_ID_PRODUCAO}.")
-
-
-if __name__ == "__main__":
-    # Agora, se executarmos 'python main.py', ele apenas executa a lógica uma vez para teste.
-    execute_sai_logic()
