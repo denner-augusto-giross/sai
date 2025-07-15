@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from peewee import MySQLDatabase
 from dotenv import load_dotenv
-from query import query_region
+#from query import query_region
 
 def read_data_from_db(query: list):
     """

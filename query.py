@@ -3,37 +3,82 @@
 def query_stuck_orders(city_id: int):
     """
     Retorna uma query SQL que encontra todas as corridas "travadas"
-    para uma cidade específica, incluindo os dados de entrega.
+    para uma cidade específica.
     """
     return f"""
-        -- A sua query de ordens travadas, agora com os dados de entrega
         WITH
         base_latitude as (
-            -- ... (código CTE inalterado)
+            select
+                ua.user_id,
+                ua.value as latitude
+            from giross_producao.user_attributes ua
+            inner join (select user_id, max(id) as id from giross_producao.user_attributes where attribute_id = 2 group by 1) ua1
+                on ua.id = ua1.id
+            where ua.attribute_id = 2
         ),
         base_longitude as (
-            -- ... (código CTE inalterado)
+            select
+                ua.user_id,
+                ua.value as longitude
+            from giross_producao.user_attributes ua
+            inner join (select user_id, max(id) as id from giross_producao.user_attributes where attribute_id = 3 group by 1) ua1
+                on ua.id = ua1.id
+            where ua.attribute_id = 3
         ),
         user_requests_ AS (
             SELECT
                 ur.id,
                 ur.user_id,
-                -- ... (outros campos SELECT)
-
-                -- ===================================
-                -- ALTERAÇÃO PARA OBTER DADOS DE ENTREGA
-                ur.latitude AS delivery_latitude,
-                ur.longitude AS delivery_longitude,
-                -- ===================================
-                
+                ur.estimated_total,
+                ur.provider_id,
+                ur.status,
+                ROUND(
+                    ur.estimated_total * (
+                        1 - (COALESCE(prl.percent, 20) / 100)
+                    ),
+                    2
+                ) AS amount,
+                REGEXP_REPLACE(
+                    TRIM(
+                        REPLACE(
+                            REPLACE(
+                                CONCAT(u.first_name, ' ', u.last_name),
+                                'Integração ',
+                                ''
+                            ),
+                            'Integracao',
+                            ''
+                        )
+                    ),
+                    ' - [A-Z ]+ - [A-Z]{{2}}$',
+                    ''
+                ) AS user_name,
+                c.id AS city_id,
                 blat.latitude AS store_latitude,
                 blon.longitude AS store_longitude
             FROM
                 giross_producao.user_requests ur
-                -- ... (código JOINs inalterado)
+                LEFT JOIN giross_producao.user_request_delay_rules urdr ON urdr.type = 'USER'
+                    AND ur.user_id = urdr.value
+                    AND ur.original_created_at >= urdr.created_at
+                LEFT JOIN giross_producao.percentage_receipt_location prl ON prl.location_type = 'USER'
+                    AND ur.user_id = prl.value
+                    AND ur.original_created_at BETWEEN prl.created_at AND COALESCE(prl.deleted_at, NOW())
+                LEFT JOIN giross_producao.cities c ON ur.city_id = c.id
+                LEFT JOIN giross_producao.users u ON ur.user_id = u.id
+                LEFT JOIN base_latitude blat ON ur.user_id = blat.user_id
+                LEFT JOIN base_longitude blon ON ur.user_id = blon.user_id
             WHERE
-                -- ... (condições WHERE inalteradas)
-                ur.city_id = {city_id} 
+                CASE
+                    WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
+                    ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
+                END >= 3
+                AND ur.status = 'SEARCHING'
+                AND ur.provider_id IN (0, 1266)
+                AND ur.city_id = {city_id} 
+                AND DATE(
+                    COALESCE(ur.original_created_at, ur.started_at)
+                ) >= CURDATE() - INTERVAL 7 DAY
         )
         SELECT
             id AS order_id,
@@ -42,25 +87,26 @@ def query_stuck_orders(city_id: int):
             amount AS value,
             city_id,
             store_latitude,
-            store_longitude,
-            delivery_latitude,
-            delivery_longitude
+            store_longitude
         FROM
             user_requests_;
     """
 
-def query_available_providers(city_id: int):
+def query_available_providers():
     """
-    Retorna uma query SQL que busca todos os provedores disponíveis
-    para uma cidade específica.
+    Retorna uma query SQL que busca TODOS os provedores disponíveis,
+    independentemente da cidade. O filtro geográfico será feito no Python.
     """
-    # Nota: Assumimos que a tabela de provedores tem uma coluna city_id.
-    # Se não tiver, podemos remover o filtro desta query específica.
     return f"""
-        -- A sua query de provedores, agora com o filtro de cidade
         WITH
         provider_releases AS (
-            -- ... (código CTE inalterado)
+            SELECT
+                provider_id,
+                COUNT(id) AS total_releases
+            FROM
+                giross_producao.provider_cancelled_user_requests
+            GROUP BY
+                1
         )
         SELECT
             p.id AS provider_id,
@@ -76,11 +122,6 @@ def query_available_providers(city_id: int):
             INNER JOIN giross_producao.provider_services ps ON p.id = ps.provider_id AND ps.status IN ('active', 'riding')
             LEFT JOIN giross_producao.provider_scores score ON p.id = score.provider_id
             LEFT JOIN provider_releases pr ON p.id = pr.provider_id
-        WHERE
-            -- ===================================
-            -- ALTERAÇÃO PARA PRODUÇÃO AQUI
-            p.city_id = {city_id}
-            -- ===================================
         ORDER BY
             total_releases_last_2_weeks ASC,
             score DESC;

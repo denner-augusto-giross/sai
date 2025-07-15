@@ -1,4 +1,7 @@
+# chatguru_api.py
+
 import requests
+import json
 
 class ChatguruWABA:
     """
@@ -27,51 +30,33 @@ class ChatguruWABA:
         """Etapa 1: Cadastrar um novo chat."""
         params = self.base_params.copy()
         params.update({
-            "action": "chat_add",
-            "chat_number": chat_number,
-            "name": user_name,
-            #"text": "Iniciando contato"
+            "action": "chat_add", "chat_number": chat_number,
+            "name": user_name, "text": "Iniciando contato"
         })
         return self._send_request(params)
 
     def update_custom_fields(self, chat_number, fields_to_update: dict):
-        """
-        Etapa 2: Atualizar campos personalizados para um chat.
-        """
+        """Etapa 2: Atualizar campos personalizados para um chat."""
         params = self.base_params.copy()
         params.update({
             "action": "chat_update_custom_fields",
             "chat_number": chat_number,
         })
-        
-        # Adiciona o prefixo 'field__' a cada nome de campo, como a documentação sugere.
         for key, value in fields_to_update.items():
             params[f"field__{key}"] = value
-            
         return self._send_request(params)
 
-    def execute_dialog(self, chat_number, dialog_id):
-        """Etapa 3: Executar um diálogo (enviar o template)."""
-        params = self.base_params.copy()
-        params.update({
-            "action": "dialog_execute",
-            "dialog_id": dialog_id,
-            "chat_number": chat_number
-        })
-        return self._send_request(params)
-    
-    def execute_dialog_with_template(self, chat_number, dialog_id, template_name, language_code, params_list):
+    # --- FUNÇÃO CORRIGIDA AQUI ---
+    def execute_dialog(self, chat_number, dialog_id, template_params: list):
         """
-        Executa um diálogo que, por sua vez, envia um template da Meta preenchido.
+        Etapa 3: Executa um diálogo e envia os parâmetros para o template.
         """
         params = self.base_params.copy()
         params.update({
             "action": "dialog_execute",
             "dialog_id": dialog_id,
             "chat_number": chat_number,
-            # Passando os parâmetros do template para a chamada de diálogo
-            "name": template_name,
-            "language": language_code,
-            "params": json.dumps(params_list)
+            # Adiciona os parâmetros do template ao payload da requisição
+            "params": json.dumps(template_params)
         })
         return self._send_request(params)
