@@ -1,7 +1,7 @@
 def query_stuck_orders(city_id: int):
     """
-    Retorna uma query SQL que encontra as corridas travadas, já com o
-    endereço de coleta formatado e a distância da loja ao cliente.
+    Retorna uma query SQL que encontra as corridas travadas, já com os
+    filtros de D+1 e Mercado Livre aplicados.
     """
     return f"""
         WITH
@@ -28,23 +28,25 @@ def query_stuck_orders(city_id: int):
                 ur.id,
                 ur.user_id,
                 ur.provider_id,
-                ROUND(
-                    ur.estimated_total * (1 - (COALESCE(prl.percent, 20) / 100)), 2
-                ) AS amount,
                 c.id AS city_id,
                 blat.latitude AS store_latitude,
                 blon.longitude AS store_longitude,
                 ur.distance as store_to_delivery_distance,
                 
-                -- Concatena o nome da loja com o endereço para o template
-                CONCAT(
+                CONCAT('💰 Valor da Corrida: R$ ', FORMAT(
+                    ROUND(ur.estimated_total * (1 - (COALESCE(prl.percent, 20) / 100)), 2),
+                    2,
+                    'de_DE'
+                )) AS param1_valor,
+
+                CONCAT('📍 Endereço de Coleta: ', 
                     REGEXP_REPLACE(
                         TRIM(REPLACE(REPLACE(CONCAT(u.first_name, ' ', u.last_name), 'Integração ', ''), 'Integracao', '')),
                         ' - [A-Z ]+ - [A-Z]{{2}}$', ''
                     ),
                     ' - ',
                     ur.s_address
-                ) AS full_pickup_address
+                ) AS param2_endereco
 
             FROM
                 giross_producao.user_requests ur
@@ -66,6 +68,11 @@ def query_stuck_orders(city_id: int):
                 AND ur.status = 'SEARCHING'
                 AND ur.provider_id IN (0, 1266)
                 AND ur.city_id = {city_id} 
+                -- ===================================
+                -- NOVOS FILTROS AQUI
+                AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)
+                AND (ur.integration_service NOT LIKE '%mercado livre%' OR ur.integration_service IS NULL)
+                -- ===================================
                 AND DATE(
                     COALESCE(ur.original_created_at, ur.started_at)
                 ) >= CURDATE() - INTERVAL 7 DAY
@@ -77,8 +84,8 @@ def query_stuck_orders(city_id: int):
             store_latitude,
             store_longitude,
             store_to_delivery_distance,
-            amount AS value,
-            full_pickup_address -- Usando a nova coluna concatenada
+            param1_valor,
+            param2_endereco
         FROM
             user_requests_;
     """
