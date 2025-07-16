@@ -6,9 +6,11 @@ from time import sleep
 from dotenv import load_dotenv
 from chatguru_api import ChatguruWABA
 from db import read_data_from_db
-from query import query_stuck_orders, query_available_providers
+from query import query_stuck_orders, query_available_providers, query_blocked_pairs
 from geopy.distance import geodesic
 import pandas as pd
+
+pd.set_option('display.max_columns', None)
 
 CITY_ID_PRODUCAO = 50
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
@@ -18,7 +20,6 @@ def run_offer_workflow(chat_number, match_data, template_params):
     """
     Executa o fluxo completo para enviar uma oferta de corrida.
     """
-    # Esta função não precisa de alterações e permanece a mesma.
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
     chat_account_id = os.getenv("CHAT_GURU_ACCOUNT_ID")
@@ -47,16 +48,27 @@ def run_offer_workflow(chat_number, match_data, template_params):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sistema de Assignação Inteligente (SAI)")
-    parser.add_argument("--numero-teste", type=str, help="Envia a oferta para um número de teste.")
-    parser.add_argument("--limite", type=int, default=0, help="Limita o número de ofertas a serem enviadas.")
+    parser.add_argument("--numero-teste", type=str, help="Envia a oferta para um número de teste específico.")
+    parser.add_argument("--limite", type=int, default=0, help="Limita o número de ofertas a serem enviadas (0 para sem limite).")
+    parser.add_argument("--print-dfs", action="store_true", help="Imprime o cabeçalho dos DataFrames intermediários no console.")
     args = parser.parse_args()
     
     print(f"--- A INICIAR SAI PARA A CIDADE ID: {CITY_ID_PRODUCAO} ---")
+    
     stuck_orders_df = read_data_from_db(query_stuck_orders(CITY_ID_PRODUCAO))
     providers_df = read_data_from_db(query_available_providers())
+    blocked_pairs_df = read_data_from_db(query_blocked_pairs())
+
+    if args.print_dfs:
+        print("\n" + "="*20 + " DEBUG: stuck_orders_df " + "="*20)
+        print(stuck_orders_df.head())
+        print("\n" + "="*20 + " DEBUG: providers_df " + "="*20)
+        print(providers_df.head())
+        print("\n" + "="*20 + " DEBUG: blocked_pairs_df " + "="*20)
+        print(blocked_pairs_df.head())
 
     if stuck_orders_df is not None and not stuck_orders_df.empty and providers_df is not None and not providers_df.empty:
-        # Lógica de combinação e cálculo de distância do provedor até a loja
+        
         stuck_orders_df.dropna(subset=['store_latitude', 'store_longitude'], inplace=True)
         providers_df.dropna(subset=['latitude', 'longitude'], inplace=True)
         stuck_orders_df['store_latitude'] = pd.to_numeric(stuck_orders_df['store_latitude'])
@@ -66,14 +78,18 @@ if __name__ == "__main__":
         stuck_orders_df['key'] = 1
         providers_df['key'] = 1
         all_combinations_df = pd.merge(stuck_orders_df, providers_df, on='key').drop('key', axis=1)
+
+        merged_df = pd.merge(all_combinations_df, blocked_pairs_df, on=['user_id', 'provider_id'], how='left', indicator=True)
+        valid_combinations_df = merged_df[merged_df['_merge'] == 'left_only'].copy()
         
         def calculate_distance(row):
             order_coords = (row['store_latitude'], row['store_longitude'])
             provider_coords = (row['latitude'], row['longitude'])
             return geodesic(order_coords, provider_coords).kilometers
         
-        all_combinations_df['distance_km'] = all_combinations_df.apply(calculate_distance, axis=1)
-        nearby_providers_df = all_combinations_df[all_combinations_df['distance_km'] <= 10].copy()
+        valid_combinations_df['distance_km'] = valid_combinations_df.apply(calculate_distance, axis=1)
+        
+        nearby_providers_df = valid_combinations_df[valid_combinations_df['distance_km'] <= 10].copy()
         
         nearby_providers_df.sort_values(
             by=['order_id', 'distance_km', 'total_releases_last_2_weeks', 'score'],
@@ -81,6 +97,11 @@ if __name__ == "__main__":
             inplace=True
         )
         best_matches_df = nearby_providers_df.groupby('order_id').first().reset_index()
+
+        if args.print_dfs:
+            print("\n" + "="*20 + " DEBUG: best_matches_df (Final) " + "="*20)
+            print(best_matches_df.head())
+            print("\n" + "="*20 + " FIM DO DEBUG " + "="*20)
 
         if not best_matches_df.empty:
             if args.limite > 0:
@@ -92,25 +113,22 @@ if __name__ == "__main__":
                 match_data = match.to_dict()
                 
                 try:
-                    # --- CONSTRUÇÃO DOS PARÂMETROS PARA O NOVO TEMPLATE ---
+                    # --- CORREÇÃO FINAL AQUI ---
                     
-                    # 1. Valor da Corrida
-                    param1 = f"{match_data.get('value', 'N/D'):.2f}"
+                    # Parâmetros 1 e 2 são buscados diretamente, já formatados pela query.
+                    param1 = match_data.get('param1_valor', '💰 Valor da Corrida: N/D')
+                    param2 = match_data.get('param2_endereco', '📍 Endereço de Coleta: N/D')
                     
-                    # 2. Endereço de Coleta (já formatado pela query)
-                    param2 = match_data.get('full_pickup_address', 'N/D')
-                    
-                    # 3. Distância Total do Percurso
+                    # Parâmetros 3 e 4 são calculados e formatados aqui.
                     dist_to_store = match_data.get('distance_km', 0)
+                    eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
+                    param3 = f"Sua Situação:\n- Distância até a coleta: ~{dist_to_store:.1f} km\n- Tempo estimado até a coleta: ~{eta_to_store} min"
+
                     store_to_delivery_dist = match_data.get('store_to_delivery_distance', 0)
                     total_dist = dist_to_store + store_to_delivery_dist
-                    param3 = f"~{total_dist:.1f} km"
-
-                    # 4. Tempo Estimado até a Coleta
-                    eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
-                    param4 = f"~{eta_to_store} min"
+                    total_eta = int((total_dist / AVG_SPEED_KMH) * 60)
+                    param4 = f"Detalhes da Entrega:\n- Percurso total da corrida: ~{total_dist:.1f} km\n- Tempo estimado total (coleta + entrega): ~{total_eta} min"
                     
-                    # Monta a lista final com os 4 parâmetros
                     template_params = [param1, param2, param3, param4]
                     
                     recipient_phone_number = args.numero_teste if args.numero_teste else match_data.get('mobile')

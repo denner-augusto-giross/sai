@@ -120,3 +120,10 @@ def query_available_providers():
             total_releases_last_2_weeks ASC,
             score DESC;
     """
+
+def query_blocked_pairs():
+    """
+    Retorna uma query SQL que busca todos os pares de user_id e provider_id
+    que estão na tabela de bloqueios.
+    """
+    return "SELECT user_id, provider_id FROM giross_producao.user_provider_blocks"
