@@ -18,6 +18,7 @@ def run_offer_workflow(chat_number, match_data, template_params):
     """
     Executa o fluxo completo para enviar uma oferta de corrida.
     """
+    # Esta função não precisa de alterações e permanece a mesma.
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
     chat_account_id = os.getenv("CHAT_GURU_ACCOUNT_ID")
@@ -55,6 +56,7 @@ if __name__ == "__main__":
     providers_df = read_data_from_db(query_available_providers())
 
     if stuck_orders_df is not None and not stuck_orders_df.empty and providers_df is not None and not providers_df.empty:
+        # Lógica de combinação e cálculo de distância do provedor até a loja
         stuck_orders_df.dropna(subset=['store_latitude', 'store_longitude'], inplace=True)
         providers_df.dropna(subset=['latitude', 'longitude'], inplace=True)
         stuck_orders_df['store_latitude'] = pd.to_numeric(stuck_orders_df['store_latitude'])
@@ -90,22 +92,25 @@ if __name__ == "__main__":
                 match_data = match.to_dict()
                 
                 try:
-                    # --- CORREÇÃO FINAL AQUI ---
+                    # --- CONSTRUÇÃO DOS PARÂMETROS PARA O NOVO TEMPLATE ---
                     
-                    # Parâmetros 1 e 2 são buscados diretamente, já formatados pela query.
-                    param1 = match_data.get('param1_valor', '💰 Valor da Corrida: N/D')
-                    param2 = match_data.get('param2_endereco', '📍 Endereço de Coleta: N/D')
+                    # 1. Valor da Corrida
+                    param1 = f"{match_data.get('value', 'N/D'):.2f}"
                     
-                    # Parâmetros 3 e 4 são calculados e formatados aqui.
+                    # 2. Endereço de Coleta (já formatado pela query)
+                    param2 = match_data.get('full_pickup_address', 'N/D')
+                    
+                    # 3. Distância Total do Percurso
                     dist_to_store = match_data.get('distance_km', 0)
-                    eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
-                    param3 = f"Sua Situação:\n- Distância até a coleta: ~{dist_to_store:.1f} km\n- Tempo estimado até a coleta: ~{eta_to_store} min"
-
                     store_to_delivery_dist = match_data.get('store_to_delivery_distance', 0)
                     total_dist = dist_to_store + store_to_delivery_dist
-                    total_eta = int((total_dist / AVG_SPEED_KMH) * 60)
-                    param4 = f"Detalhes da Entrega:\n- Percurso total da corrida: ~{total_dist:.1f} km\n- Tempo estimado total (coleta + entrega): ~{total_eta} min"
+                    param3 = f"~{total_dist:.1f} km"
+
+                    # 4. Tempo Estimado até a Coleta
+                    eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
+                    param4 = f"~{eta_to_store} min"
                     
+                    # Monta a lista final com os 4 parâmetros
                     template_params = [param1, param2, param3, param4]
                     
                     recipient_phone_number = args.numero_teste if args.numero_teste else match_data.get('mobile')

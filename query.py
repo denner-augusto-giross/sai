@@ -1,7 +1,7 @@
 def query_stuck_orders(city_id: int):
     """
-    Retorna uma query SQL que encontra todas as corridas "travadas"
-    para uma cidade específica, incluindo o endereço completo da loja.
+    Retorna uma query SQL que encontra as corridas travadas, já com o
+    endereço de coleta formatado e a distância da loja ao cliente.
     """
     return f"""
         WITH
@@ -28,25 +28,23 @@ def query_stuck_orders(city_id: int):
                 ur.id,
                 ur.user_id,
                 ur.provider_id,
+                ROUND(
+                    ur.estimated_total * (1 - (COALESCE(prl.percent, 20) / 100)), 2
+                ) AS amount,
                 c.id AS city_id,
                 blat.latitude AS store_latitude,
                 blon.longitude AS store_longitude,
                 ur.distance as store_to_delivery_distance,
                 
-                CONCAT('💰 Valor da Corrida: R$ ', FORMAT(
-                    ROUND(ur.estimated_total * (1 - (COALESCE(prl.percent, 20) / 100)), 2),
-                    2,
-                    'de_DE'
-                )) AS param1_valor,
-
-                CONCAT('📍 Endereço de Coleta: ', 
+                -- Concatena o nome da loja com o endereço para o template
+                CONCAT(
                     REGEXP_REPLACE(
                         TRIM(REPLACE(REPLACE(CONCAT(u.first_name, ' ', u.last_name), 'Integração ', ''), 'Integracao', '')),
                         ' - [A-Z ]+ - [A-Z]{{2}}$', ''
                     ),
                     ' - ',
                     ur.s_address
-                ) AS param2_endereco
+                ) AS full_pickup_address
 
             FROM
                 giross_producao.user_requests ur
@@ -79,8 +77,8 @@ def query_stuck_orders(city_id: int):
             store_latitude,
             store_longitude,
             store_to_delivery_distance,
-            param1_valor,
-            param2_endereco
+            amount AS value,
+            full_pickup_address -- Usando a nova coluna concatenada
         FROM
             user_requests_;
     """
