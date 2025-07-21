@@ -7,7 +7,8 @@ import urllib3
 # Desativa os avisos de segurança sobre a não verificação do SSL.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BASE_URL = "https://teste.giross.com.br/api/painel"
+#BASE_URL = "https://teste.giross.com.br/api/painel"
+BASE_URL = "http://api.giross.com.br/api/painel"
 
 def login(email, password):
     """

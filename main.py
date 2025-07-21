@@ -19,7 +19,8 @@ AVG_SPEED_KMH = 25
 
 def run_offer_workflow(chat_number, match_data, template_params):
     """
-    Executa o fluxo completo para enviar uma oferta de corrida e registrar o evento.
+    Executa o fluxo completo, agora com uma verificação robusta do status do chat
+    e tratamento para números de telefone corrigidos.
     """
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
@@ -33,18 +34,62 @@ def run_offer_workflow(chat_number, match_data, template_params):
 
     api = ChatguruWABA(chat_key, chat_account_id, chat_phone_id, chat_url)
     
-    print(f"Etapa 1: Registrando e atualizando campos para {chat_number}...")
-    api.register_chat(chat_number, match_data.get("provider_name", "Novo Provedor"))
-    custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
-    api.update_custom_fields(chat_number, custom_fields)
+    # --- LÓGICA DE REGISTRO E VERIFICAÇÃO ATUALIZADA ---
+    print(f"Etapa 1: Registrando chat com o número {chat_number}...")
+    register_response = api.register_chat(chat_number, match_data.get("provider_name", "Novo Provedor"))
+    
+    chat_add_id = register_response.get('chat_add_id')
+    if not chat_add_id:
+        print(f"ERRO: Falha ao iniciar o registro do chat para {chat_number}. Resposta: {register_response}")
+        return
 
-    print("Aguardando 2 segundos para sincronização...")
-    sleep(2)
+    # Guarda o número original para os passos seguintes, mas pode ser atualizado
+    final_chat_number = chat_number
+
+    # Loop de verificação de status (espera até 15 segundos)
+    for i in range(5):
+        print(f"Verificando status do registro do chat (tentativa {i+1}/5)...")
+        status_response = api.check_chat_status(chat_add_id)
+        chat_status = status_response.get('chat_add_status')
+        description = status_response.get('chat_add_status_description', '')
+        
+        # --- CORREÇÃO AQUI ---
+        # Trata 'done' como um caso de sucesso, assim como 'success' e 'fetched'.
+        if chat_status in ['success', 'fetched', 'done']:
+            print(f"SUCESSO: Chat registrado ou encontrado com sucesso (status: {chat_status})!")
+            
+            # Verifica se o número foi corrigido pela API
+            if 'corrigido para' in description:
+                try:
+                    # Extrai apenas os dígitos do número corrigido
+                    corrected_number_raw = description.split('corrigido para ')[1].strip().replace('.', '')
+                    corrected_number = "".join(filter(str.isdigit, corrected_number_raw))
+                    if corrected_number:
+                        final_chat_number = corrected_number
+                        print(f"INFO: O número do chat foi corrigido para {final_chat_number}")
+                except IndexError:
+                    print("AVISO: A descrição continha 'corrigido para', mas não foi possível extrair o novo número.")
+
+            break # Sai do loop se o chat foi criado ou encontrado
+        
+        if chat_status != 'pending':
+            print(f"ERRO: O registro do chat falhou com o status '{chat_status}'. Descrição: {description}")
+            return
+            
+        sleep(3)
+    else:
+        print(f"ERRO: Timeout. O registro do chat para {chat_number} não foi concluído após 15 segundos.")
+        return
+
+    # --- O resto do fluxo continua, mas usando 'final_chat_number' ---
+    print(f"Etapa 2: Atualizando campos personalizados para o chat {final_chat_number}...")
+    custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
+    api.update_custom_fields(final_chat_number, custom_fields)
 
     if DIALOG_ID_PARA_OFERTA:
-        print(f"Etapa 2: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
-        dialog_response = api.execute_dialog(chat_number, DIALOG_ID_PARA_OFERTA, template_params)
-        print(f"Resposta da Execução do Diálogo para {chat_number}:", dialog_response)
+        print(f"Etapa 3: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
+        dialog_response = api.execute_dialog(final_chat_number, DIALOG_ID_PARA_OFERTA, template_params)
+        print(f"Resposta da Execução do Diálogo para {final_chat_number}:", dialog_response)
         
         if dialog_response and dialog_response.get('result') == 'success':
             log_metadata = {
