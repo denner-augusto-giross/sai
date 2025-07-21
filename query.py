@@ -1,3 +1,4 @@
+import pymysql
 def query_stuck_orders(city_id: int):
     """
     Retorna uma query SQL que encontra as corridas travadas, já com os
@@ -113,7 +114,7 @@ def query_available_providers():
             COALESCE(pr.total_releases, 0) AS total_releases_last_2_weeks
         FROM
             giross_producao.providers p
-            INNER JOIN giross_producao.provider_services ps ON p.id = ps.provider_id AND ps.status IN ('active', 'riding')
+            INNER JOIN giross_producao.provider_services ps ON p.id = ps.provider_id AND ps.status IN ('active')
             LEFT JOIN giross_producao.provider_scores score ON p.id = score.provider_id
             LEFT JOIN provider_releases pr ON p.id = pr.provider_id
         ORDER BY
@@ -127,3 +128,29 @@ def query_blocked_pairs():
     que estão na tabela de bloqueios.
     """
     return "SELECT user_id, provider_id FROM giross_producao.user_provider_blocks"
+
+def verificar_execucao_ausente():
+    try:
+        conn = pymysql.connect(**db_config)
+        cursor = conn.cursor()
+        query = """
+        CREATE TABLE IF NOT EXISTS sai_tracking_log_TEST (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            order_id INT NOT NULL,
+            provider_id INT NOT NULL,
+            event_type VARCHAR(50) NOT NULL,
+            event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            metadata JSON,
+            INDEX (order_id),
+            INDEX (event_type)
+        )
+        """
+        cursor.execute(query)
+        resultado = cursor.fetchone()
+        return resultado[0] == 0
+    except pymysql.Error as err:
+        print(f"[verificar_execucao_ausente] Erro: {err}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()

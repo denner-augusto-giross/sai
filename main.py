@@ -9,6 +9,7 @@ from db import read_data_from_db
 from query import query_stuck_orders, query_available_providers, query_blocked_pairs
 from geopy.distance import geodesic
 import pandas as pd
+from log_db import log_sai_event # Importar a nova função de log
 
 pd.set_option('display.max_columns', None)
 
@@ -18,7 +19,7 @@ AVG_SPEED_KMH = 25
 
 def run_offer_workflow(chat_number, match_data, template_params):
     """
-    Executa o fluxo completo para enviar uma oferta de corrida.
+    Executa o fluxo completo para enviar uma oferta de corrida e registrar o evento.
     """
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
@@ -44,7 +45,41 @@ def run_offer_workflow(chat_number, match_data, template_params):
         print(f"Etapa 2: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
         dialog_response = api.execute_dialog(chat_number, DIALOG_ID_PARA_OFERTA, template_params)
         print(f"Resposta da Execução do Diálogo para {chat_number}:", dialog_response)
+        
+        # --- LÓGICA DE LOGGING INTEGRADA ---
+        if dialog_response and dialog_response.get('result') == 'success':
+            # Prepara os metadados para o log
+            log_metadata = {
+                "distance_to_store_km": match_data.get('distance_km'),
+                "provider_score": match_data.get('score'),
+                "provider_releases": match_data.get('total_releases_last_2_weeks')
+            }
+            log_sai_event(
+                order_id=match_data['order_id'],
+                provider_id=match_data['provider_id'],
+                event_type='OFFER_SENT',
+                metadata=log_metadata
+            )
 
+def clean_and_format_phone(phone_number):
+    """
+    Limpa e formata um número de telefone brasileiro para o formato E.164 (ex: 55119XXXXXXXX).
+    """
+    if not phone_number or not isinstance(phone_number, str):
+        return None
+
+    cleaned_number = "".join(filter(str.isdigit, phone_number))
+
+    if cleaned_number.startswith('0'):
+        cleaned_number = cleaned_number[1:]
+
+    if cleaned_number.startswith('55'):
+        return cleaned_number[:13]
+    
+    if len(cleaned_number) in [10, 11]:
+        return f"55{cleaned_number}"
+
+    return cleaned_number
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sistema de Assignação Inteligente (SAI)")
@@ -59,12 +94,21 @@ if __name__ == "__main__":
     providers_df = read_data_from_db(query_available_providers())
     blocked_pairs_df = read_data_from_db(query_blocked_pairs())
 
+    # --- NOVO TRECHO: Formatação dos números de telefone ---
+    if providers_df is not None and not providers_df.empty:
+        print("\nINFO: Formatando os números de telefone dos provedores...")
+        providers_df['mobile'] = providers_df['mobile'].apply(clean_and_format_phone)
+        # Remove provedores cujo número não pôde ser formatado
+        providers_df.dropna(subset=['mobile'], inplace=True)
+        print("INFO: Formatação concluída.")
+    # --- FIM DO NOVO TRECHO ---
+
     if args.print_dfs:
-        print("\n" + "="*20 + " DEBUG: stuck_orders_df " + "="*20)
+        print("\n" + "="*20 + " DEBUG: DataFrame de Corridas Travadas " + "="*20)
         print(stuck_orders_df.head())
-        print("\n" + "="*20 + " DEBUG: providers_df " + "="*20)
+        print("\n" + "="*20 + " DEBUG: DataFrame de Provedores Disponíveis " + "="*20)
         print(providers_df.head())
-        print("\n" + "="*20 + " DEBUG: blocked_pairs_df " + "="*20)
+        print("\n" + "="*20 + " DEBUG: DataFrame de Pares Bloqueados " + "="*20)
         print(blocked_pairs_df.head())
 
     if stuck_orders_df is not None and not stuck_orders_df.empty and providers_df is not None and not providers_df.empty:
@@ -99,7 +143,7 @@ if __name__ == "__main__":
         best_matches_df = nearby_providers_df.groupby('order_id').first().reset_index()
 
         if args.print_dfs:
-            print("\n" + "="*20 + " DEBUG: best_matches_df (Final) " + "="*20)
+            print("\n" + "="*20 + " DEBUG: DataFrame de Melhores Matches (Final) " + "="*20)
             print(best_matches_df.head())
             print("\n" + "="*20 + " FIM DO DEBUG " + "="*20)
 
@@ -113,13 +157,9 @@ if __name__ == "__main__":
                 match_data = match.to_dict()
                 
                 try:
-                    # --- CORREÇÃO FINAL AQUI ---
-                    
-                    # Parâmetros 1 e 2 são buscados diretamente, já formatados pela query.
                     param1 = match_data.get('param1_valor', '💰 Valor da Corrida: N/D')
                     param2 = match_data.get('param2_endereco', '📍 Endereço de Coleta: N/D')
                     
-                    # Parâmetros 3 e 4 são calculados e formatados aqui.
                     dist_to_store = match_data.get('distance_km', 0)
                     eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
                     param3 = f"Sua Situação:\n- Distância até a coleta: ~{dist_to_store:.1f} km\n- Tempo estimado até a coleta: ~{eta_to_store} min"
