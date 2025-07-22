@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 5000
 
 # 7. O comando para iniciar o servidor em produção
-CMD sh -c "echo '--- Container a iniciar, a verificar ficheiros... ---' && ls -la && echo '--- A verificar variáveis de ambiente... ---' && printenv && echo '--- A tentar iniciar o servidor Waitress... ---' && waitress-serve --host=0.0.0.0 --port=5000 webhook_server:app"
+CMD ["waitress-serve", "--host=0.0.0.0", "--port=5000", "webhook_server:app"]
