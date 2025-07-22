@@ -31,7 +31,7 @@ class ChatguruWABA:
         params = self.base_params.copy()
         params.update({
             "action": "chat_add", "chat_number": chat_number,
-            "name": user_name,# "text": "\u200b"
+            "name": user_name, "text": "Olá! Como vai?"
         })
         return self._send_request(params)
 
