@@ -3,6 +3,7 @@
 import os
 import pymysql
 import json
+import pandas as pd
 from dotenv import load_dotenv
 
 def log_sai_event(order_id: int, provider_id: int, event_type: str, metadata: dict = None):
@@ -51,5 +52,40 @@ def log_sai_event(order_id: int, provider_id: int, event_type: str, metadata: di
     finally:
         if cursor:
             cursor.close()
+        if db_connection:
+            db_connection.close()
+
+def read_log_data(query: str):
+    """
+    Conecta-se ao banco de dados de log com as credenciais corretas e
+    lê os dados usando pandas.
+    """
+    load_dotenv()
+    
+    host = os.getenv('LOG_DB_HOST')
+    user = os.getenv('LOG_DB_USER')
+    password = os.getenv('LOG_DB_PASSWORD')
+    port = int(os.getenv('LOG_DB_PORT'))
+    db_name = os.getenv('LOG_DB_NAME')
+
+    if not all([host, user, password, port, db_name]):
+        print("ERRO DE LEITURA DE LOG: Verifique se as variáveis LOG_DB_* estão definidas no seu .env.")
+        return None
+
+    db_connection = None
+    try:
+        db_connection = pymysql.connect(
+            host=host, user=user, password=password, database=db_name,
+            port=int(port), connect_timeout=15
+        )
+        
+        result_df = pd.read_sql_query(query, db_connection)
+        return result_df
+
+    except pymysql.Error as err:
+        print(f"\nERRO DE LEITURA DE LOG: Ocorreu um erro com o PyMySQL: {err}")
+        return None
+    
+    finally:
         if db_connection:
             db_connection.close()

@@ -154,3 +154,18 @@ def verificar_execucao_ausente():
     finally:
         cursor.close()
         conn.close()
+
+def query_offers_sent():
+    """
+    Retorna uma query SQL que busca todos os pares de order_id e provider_id
+    para os quais uma oferta já foi enviada, a partir da tabela de logs.
+    """
+    return """
+        SELECT DISTINCT
+            order_id,
+            provider_id
+        FROM
+            desenvolvimento_bi.sai_event_log
+        WHERE
+            event_type = 'OFFER_SENT'
+    """
