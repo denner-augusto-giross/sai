@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from internal_api import login, assign_order
 from log_db import log_sai_event
+from datetime import datetime
 
 load_dotenv()
 app = Flask(__name__)
@@ -32,7 +33,7 @@ def receive_message():
     print(f"INFO: IP de Origem: {request.remote_addr}")
     print("="*50)
     # --- FIM DO LOG DE DIAGNÓSTICO ---
-    
+
     data = request.json
     print("\n" + "="*50)
     print(">>> DADOS JSON RECEBIDOS DO CHATGURU <<<")
