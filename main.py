@@ -13,7 +13,7 @@ from log_db import log_sai_event, read_log_data
 
 pd.set_option('display.max_columns', None)
 
-CITY_ID_PRODUCAO = 50
+CITIES_TO_PROCESS = [193, 162, 171, 150, 163]
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
 AVG_SPEED_KMH = 25
 MAX_OFFERS_PER_ORDER = 3
@@ -109,11 +109,18 @@ def clean_and_format_phone(phone_number):
 
 def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
     """
-    Encapsula toda a lógica de busca, correspondência e oferta.
+    Encapsula toda a lógica de busca, correspondência e oferta para
+    uma lista de cidades.
     """
-    print(f"--- A INICIAR LÓGICA DO SAI PARA A CIDADE ID: {CITY_ID_PRODUCAO} ---")
+    # Converte a lista de cidades para uma string para o log
+    cities_str = ', '.join(map(str, CITIES_TO_PROCESS))
+    print(f"--- A INICIAR LÓGICA DO SAI PARA AS CIDADES: {cities_str} ---")
     
-    stuck_orders_df = read_data_from_db(query_stuck_orders(CITY_ID_PRODUCAO))
+    # --- ALTERAÇÃO AQUI ---
+    # Passamos a lista de cidades diretamente para a função de query.
+    stuck_orders_df = read_data_from_db(query_stuck_orders(CITIES_TO_PROCESS))
+    # --- FIM DA ALTERAÇÃO ---
+
     providers_df = read_data_from_db(query_available_providers())
     blocked_pairs_df = read_data_from_db(query_blocked_pairs())
     offers_sent_df = read_log_data(query_offers_sent())

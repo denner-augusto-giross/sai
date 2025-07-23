@@ -1,28 +1,31 @@
 import pymysql
-def query_stuck_orders(city_id: int):
+def query_stuck_orders(city_ids: list):
     """
-    Retorna uma query SQL que encontra as corridas travadas, já com os
-    filtros de D+1 e Mercado Livre aplicados.
+    Retorna uma query SQL que encontra as corridas travadas para uma
+    lista específica de cidades.
     """
+    # Converte a lista de IDs de Python para uma string formatada para o SQL (ex: "(50, 193, 162)")
+    city_ids_str = f"({', '.join(map(str, city_ids))})"
+
     return f"""
         WITH
         base_latitude as (
-            select
+            SELECT
                 ua.user_id,
                 ua.value as latitude
-            from giross_producao.user_attributes ua
-            inner join (select user_id, max(id) as id from giross_producao.user_attributes where attribute_id = 2 group by 1) ua1
-                on ua.id = ua1.id
-            where ua.attribute_id = 2
+            FROM giross_producao.user_attributes ua
+            INNER JOIN (SELECT user_id, MAX(id) as id FROM giross_producao.user_attributes WHERE attribute_id = 2 GROUP BY 1) ua1
+                ON ua.id = ua1.id
+            WHERE ua.attribute_id = 2
         ),
         base_longitude as (
-            select
+            SELECT
                 ua.user_id,
                 ua.value as longitude
-            from giross_producao.user_attributes ua
-            inner join (select user_id, max(id) as id from giross_producao.user_attributes where attribute_id = 3 group by 1) ua1
-                on ua.id = ua1.id
-            where ua.attribute_id = 3
+            FROM giross_producao.user_attributes ua
+            INNER JOIN (SELECT user_id, MAX(id) as id FROM giross_producao.user_attributes WHERE attribute_id = 3 GROUP BY 1) ua1
+                ON ua.id = ua1.id
+            WHERE ua.attribute_id = 3
         ),
         user_requests_ AS (
             SELECT
@@ -68,12 +71,12 @@ def query_stuck_orders(city_id: int):
                 END >= 3
                 AND ur.status = 'SEARCHING'
                 AND ur.provider_id IN (0, 1266)
-                AND ur.city_id = {city_id} 
                 -- ===================================
-                -- NOVOS FILTROS AQUI
+                -- ALTERAÇÃO PARA MÚLTIPLAS CIDADES AQUI
+                AND ur.city_id IN {city_ids_str}
+                -- ===================================
                 AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)
                 AND (ur.integration_service NOT LIKE '%mercado livre%' OR ur.integration_service IS NULL)
-                -- ===================================
                 AND DATE(
                     COALESCE(ur.original_created_at, ur.started_at)
                 ) >= CURDATE() - INTERVAL 7 DAY
