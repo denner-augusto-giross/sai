@@ -24,6 +24,15 @@ def receive_message():
     """
     Recebe a resposta do provedor, registra o evento e toma a ação apropriada.
     """
+
+    # --- NOVO LOG DE DIAGNÓSTICO AQUI ---
+    print("\n" + "="*50)
+    print(f">>> ROTA /webhook ACIONADA ÀS {datetime.now()} <<<")
+    print(f"INFO: Método da Requisição: {request.method}")
+    print(f"INFO: IP de Origem: {request.remote_addr}")
+    print("="*50)
+    # --- FIM DO LOG DE DIAGNÓSTICO ---
+    
     data = request.json
     print("\n" + "="*50)
     print(">>> DADOS JSON RECEBIDOS DO CHATGURU <<<")
