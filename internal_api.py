@@ -7,12 +7,11 @@ import urllib3
 # Desativa os avisos de segurança sobre a não verificação do SSL.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-#BASE_URL = "https://teste.giross.com.br/api/painel"
 BASE_URL = "https://api.giross.com.br/api/painel"
 
 def login(email, password):
     """
-    Realiza o login na API interna, desativando a verificação SSL para diagnóstico.
+    Realiza o login na API interna e retorna o token de acesso.
     """
     url = f"{BASE_URL}/login"
     
@@ -33,10 +32,8 @@ def login(email, password):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
     
-    print(f"INFO: A tentar fazer login (com verificação SSL desativada)...")
+    print(f"INFO: A tentar fazer login no ambiente de PRODUÇÃO...")
     try:
-        # --- MUDANÇA IMPORTANTE AQUI ---
-        # Adicionamos 'verify=False' para ignorar a verificação do certificado SSL.
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=15, verify=False)
         response.raise_for_status()
         
@@ -47,7 +44,9 @@ def login(email, password):
             print("SUCESSO: Login realizado e token obtido.")
             return access_token
         else:
-            print("FALHA: Não foi possível obter o token de acesso da resposta.")
+            # --- MUDANÇA DE DIAGNÓSTICO AQUI ---
+            print("FALHA: Não foi possível obter o 'access_token' da resposta.")
+            print("Resposta completa da API:", data) # Imprime a resposta completa
             return None
             
     except requests.exceptions.HTTPError as http_err:
@@ -60,7 +59,7 @@ def login(email, password):
 
 def assign_order(access_token, provider_id, order_id):
     """
-    Atribui uma corrida a um entregador. (Adicionamos verify=False aqui também por consistência).
+    Atribui uma corrida a um entregador.
     """
     url = f"{BASE_URL}/sai/assign"
     payload = {"provider_id": provider_id, "request_id": order_id}
