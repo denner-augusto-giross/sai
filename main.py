@@ -6,7 +6,7 @@ from time import sleep
 from dotenv import load_dotenv
 from chatguru_api import ChatguruWABA
 from db import read_data_from_db
-from query import query_stuck_orders, query_available_providers, query_blocked_pairs, query_offers_sent
+from query import query_stuck_orders, query_available_providers, query_blocked_pairs, query_offers_sent, query_offline_providers_with_history
 from geopy.distance import geodesic
 import pandas as pd
 from log_db import log_sai_event, read_log_data
@@ -109,19 +109,32 @@ def clean_and_format_phone(phone_number):
 
 def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
     """
-    Encapsula toda a lógica de busca, correspondência e oferta para
-    uma lista de cidades.
+    Encapsula toda a lógica de busca, correspondência e oferta,
+    incluindo a nova lógica para provedores offline com histórico.
     """
-    # Converte a lista de cidades para uma string para o log
     cities_str = ', '.join(map(str, CITIES_TO_PROCESS))
     print(f"--- A INICIAR LÓGICA DO SAI PARA AS CIDADES: {cities_str} ---")
     
-    # --- ALTERAÇÃO AQUI ---
-    # Passamos a lista de cidades diretamente para a função de query.
     stuck_orders_df = read_data_from_db(query_stuck_orders(CITIES_TO_PROCESS))
-    # --- FIM DA ALTERAÇÃO ---
+    
+    if stuck_orders_df is None or stuck_orders_df.empty:
+        print("INFO: Nenhuma corrida travada encontrada. Finalizando execução.")
+        return
 
-    providers_df = read_data_from_db(query_available_providers())
+    # 1. BUSCAR OS DOIS GRUPOS DE ENTREGADORES
+    online_providers_df = read_data_from_db(query_available_providers())
+    
+    store_ids = stuck_orders_df['user_id'].unique().tolist()
+    offline_providers_df = read_data_from_db(query_offline_providers_with_history(store_ids))
+    
+    # 2. ATRIBUIR PRIORIDADE E JUNTAR OS DATAFRAMES
+    if online_providers_df is not None:
+        online_providers_df['offer_priority'] = 1 # Prioridade máxima para online
+    if offline_providers_df is not None:
+        offline_providers_df['offer_priority'] = 2 # Prioridade menor para offline
+
+    providers_df = pd.concat([online_providers_df, offline_providers_df], ignore_index=True)
+    
     blocked_pairs_df = read_data_from_db(query_blocked_pairs())
     offers_sent_df = read_log_data(query_offers_sent())
     
@@ -129,86 +142,92 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
         print("AVISO: A tabela 'sai_event_log' não foi encontrada. A assumir que nenhuma oferta foi enviada.")
         offers_sent_df = pd.DataFrame(columns=['order_id', 'provider_id'])
     
-    print(f"INFO: Encontrados {len(offers_sent_df)} registros de ofertas já enviadas.")
+    print(f"INFO: Encontrados {len(online_providers_df if online_providers_df is not None else 0)} entregadores online.")
+    print(f"INFO: Encontrados {len(offline_providers_df if offline_providers_df is not None else 0)} entregadores offline com histórico recente.")
     
-    if providers_df is not None and not providers_df.empty:
-        providers_df['mobile'] = providers_df['mobile'].apply(clean_and_format_phone)
-        providers_df.dropna(subset=['mobile'], inplace=True)
+    if providers_df.empty:
+        print("INFO: Nenhum entregador (online ou offline) encontrado. Finalizando.")
+        return
+
+    providers_df['mobile'] = providers_df['mobile'].apply(clean_and_format_phone)
+    providers_df.dropna(subset=['mobile'], inplace=True)
 
     if print_dfs:
         print("\n" + "="*20 + " DEBUG: stuck_orders_df " + "="*20); print(stuck_orders_df.head())
-        print("\n" + "="*20 + " DEBUG: providers_df " + "="*20); print(providers_df.head())
+        print("\n" + "="*20 + " DEBUG: providers_df (com prioridade) " + "="*20); print(providers_df.head())
         print("\n" + "="*20 + " DEBUG: blocked_pairs_df " + "="*20); print(blocked_pairs_df.head())
 
-    if stuck_orders_df is not None and not stuck_orders_df.empty and providers_df is not None and not providers_df.empty:
-        stuck_orders_df.dropna(subset=['store_latitude', 'store_longitude'], inplace=True)
-        providers_df.dropna(subset=['latitude', 'longitude'], inplace=True)
-        stuck_orders_df['store_latitude'] = pd.to_numeric(stuck_orders_df['store_latitude'])
-        stuck_orders_df['store_longitude'] = pd.to_numeric(stuck_orders_df['store_longitude'])
-        providers_df['latitude'] = pd.to_numeric(providers_df['latitude'])
-        providers_df['longitude'] = pd.to_numeric(providers_df['longitude'])
-        stuck_orders_df['key'] = 1
-        providers_df['key'] = 1
-        all_combinations_df = pd.merge(stuck_orders_df, providers_df, on='key').drop('key', axis=1)
-        
-        merged_df = pd.merge(all_combinations_df, blocked_pairs_df, on=['user_id', 'provider_id'], how='left', indicator=True)
-        
-        # --- CORREÇÃO AQUI ---
-        # Removemos a coluna '_merge' antes de a usarmos novamente.
-        valid_combinations_df = merged_df[merged_df['_merge'] == 'left_only'].drop('_merge', axis=1).copy()
+    stuck_orders_df.dropna(subset=['store_latitude', 'store_longitude'], inplace=True)
+    providers_df.dropna(subset=['latitude', 'longitude'], inplace=True)
+    stuck_orders_df['store_latitude'] = pd.to_numeric(stuck_orders_df['store_latitude'])
+    stuck_orders_df['store_longitude'] = pd.to_numeric(stuck_orders_df['store_longitude'])
+    providers_df['latitude'] = pd.to_numeric(providers_df['latitude'])
+    providers_df['longitude'] = pd.to_numeric(providers_df['longitude'])
+    stuck_orders_df['key'] = 1
+    providers_df['key'] = 1
+    all_combinations_df = pd.merge(stuck_orders_df, providers_df, on='key').drop('key', axis=1)
+    
+    merged_df = pd.merge(all_combinations_df, blocked_pairs_df, on=['user_id', 'provider_id'], how='left', indicator=True)
+    valid_combinations_df = merged_df[merged_df['_merge'] == 'left_only'].drop('_merge', axis=1).copy()
 
-        if not offers_sent_df.empty:
-            valid_combinations_df = pd.merge(
-                valid_combinations_df,
-                offers_sent_df,
-                on=['order_id', 'provider_id'],
-                how='left',
-                indicator=True
-            ).query('_merge == "left_only"').drop('_merge', axis=1)
+    if not offers_sent_df.empty:
+        valid_combinations_df = pd.merge(
+            valid_combinations_df,
+            offers_sent_df,
+            on=['order_id', 'provider_id'],
+            how='left',
+            indicator=True
+        ).query('_merge == "left_only"').drop('_merge', axis=1)
+    
+    print(f"INFO: {len(valid_combinations_df)} combinações restantes após todos os filtros.")
+    
+    if not valid_combinations_df.empty:
+        def calculate_distance(row):
+            order_coords = (row['store_latitude'], row['store_longitude'])
+            provider_coords = (row['latitude'], row['longitude'])
+            return geodesic(order_coords, provider_coords).kilometers
         
-        print(f"INFO: {len(valid_combinations_df)} combinações restantes após todos os filtros.")
+        valid_combinations_df['distance_km'] = valid_combinations_df.apply(calculate_distance, axis=1)
+        nearby_providers_df = valid_combinations_df[valid_combinations_df['distance_km'] <= 10].copy()
         
-        if not valid_combinations_df.empty:
-            def calculate_distance(row):
-                order_coords = (row['store_latitude'], row['store_longitude'])
-                provider_coords = (row['latitude'], row['longitude'])
-                return geodesic(order_coords, provider_coords).kilometers
-            
-            valid_combinations_df['distance_km'] = valid_combinations_df.apply(calculate_distance, axis=1)
-            nearby_providers_df = valid_combinations_df[valid_combinations_df['distance_km'] <= 10].copy()
-            
-            nearby_providers_df.sort_values(by=['order_id', 'distance_km', 'total_releases_last_2_weeks', 'score'], ascending=[True, True, True, False], inplace=True)
-            
-            best_matches_df = nearby_providers_df.groupby('order_id').head(MAX_OFFERS_PER_ORDER).reset_index()
+        # 3. ATUALIZAR A ORDENAÇÃO PARA USAR A NOVA PRIORIDADE
+        nearby_providers_df.sort_values(
+            by=['order_id', 'offer_priority', 'distance_km', 'total_releases_last_2_weeks', 'score'],
+            ascending=[True, True, True, True, False],
+            inplace=True
+        )
+        
+        best_matches_df = nearby_providers_df.groupby('order_id').head(MAX_OFFERS_PER_ORDER).reset_index()
 
-            if print_dfs:
-                print("\n" + "="*20 + " DEBUG: best_matches_df (Final) " + "="*20); print(best_matches_df.head())
+        if print_dfs:
+            print("\n" + "="*20 + " DEBUG: best_matches_df (Final com Prioridade) " + "="*20); print(best_matches_df.head())
 
-            if not best_matches_df.empty:
-                if limit > 0:
-                    best_matches_df = best_matches_df.head(limit)
-                
-                print(f"\nEncontrados {len(best_matches_df)} melhores provedores. A iniciar o fluxo de ofertas...")
-                for index, match in best_matches_df.iterrows():
-                    match_data = match.to_dict()
-                    try:
-                        param1 = match_data.get('param1_valor', '💰 Valor da Corrida: N/D')
-                        param2 = match_data.get('param2_endereco', '📍 Endereço de Coleta: N/D')
-                        dist_to_store = match_data.get('distance_km', 0)
-                        eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
-                        param3 = f"Sua Situação:\n- Distância até a coleta: ~{dist_to_store:.1f} km\n- Tempo estimado até a coleta: ~{eta_to_store} min"
-                        store_to_delivery_dist = match_data.get('store_to_delivery_distance', 0)
-                        total_dist = dist_to_store + store_to_delivery_dist
-                        total_eta = int((total_dist / AVG_SPEED_KMH) * 60)
-                        param4 = f"Detalhes da Entrega:\n- Percurso total da corrida: ~{total_dist:.1f} km\n- Tempo estimado total (coleta + entrega): ~{total_eta} min"
-                        template_params = [param1, param2, param3, param4]
-                        
-                        recipient_phone_number = test_number if test_number else match_data.get('mobile')
-                        if recipient_phone_number:
-                            run_offer_workflow(recipient_phone_number, match_data, template_params)
-                            print("-" * 50)
-                    except Exception as e:
-                        print(f"ERRO ao processar o match para a ordem {match_data.get('order_id')}: {e}")
+        if not best_matches_df.empty:
+            if limit > 0:
+                best_matches_df = best_matches_df.head(limit)
+            
+            print(f"\nEncontrados {len(best_matches_df)} melhores provedores. A iniciar o fluxo de ofertas...")
+            for index, match in best_matches_df.iterrows():
+                match_data = match.to_dict()
+                try:
+                    param1 = match_data.get('param1_valor', '💰 Valor da Corrida: N/D')
+                    param2 = match_data.get('param2_endereco', '📍 Endereço de Coleta: N/D')
+                    dist_to_store = match_data.get('distance_km', 0)
+                    eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
+                    param3 = f"Sua Situação:\n- Distância até a coleta: ~{dist_to_store:.1f} km\n- Tempo estimado até a coleta: ~{eta_to_store} min"
+                    store_to_delivery_dist = match_data.get('store_to_delivery_distance', 0)
+                    total_dist = dist_to_store + store_to_delivery_dist
+                    total_eta = int((total_dist / AVG_SPEED_KMH) * 60)
+                    param4 = f"Detalhes da Entrega:\n- Percurso total da corrida: ~{total_dist:.1f} km\n- Tempo estimado total (coleta + entrega): ~{total_eta} min"
+                    template_params = [param1, param2, param3, param4]
+                    
+                    recipient_phone_number = test_number if test_number else match_data.get('mobile')
+                    if recipient_phone_number:
+                        run_offer_workflow(recipient_phone_number, match_data, template_params)
+                        print("-" * 50)
+                except Exception as e:
+                    print(f"ERRO ao processar o match para a ordem {match_data.get('order_id')}: {e}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sistema de Assignação Inteligente (SAI)")

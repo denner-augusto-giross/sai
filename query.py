@@ -132,31 +132,31 @@ def query_blocked_pairs():
     """
     return "SELECT user_id, provider_id FROM giross_producao.user_provider_blocks"
 
-def verificar_execucao_ausente():
-    try:
-        conn = pymysql.connect(**db_config)
-        cursor = conn.cursor()
-        query = """
-        CREATE TABLE IF NOT EXISTS sai_tracking_log_TEST (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            order_id INT NOT NULL,
-            provider_id INT NOT NULL,
-            event_type VARCHAR(50) NOT NULL,
-            event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            metadata JSON,
-            INDEX (order_id),
-            INDEX (event_type)
-        )
-        """
-        cursor.execute(query)
-        resultado = cursor.fetchone()
-        return resultado[0] == 0
-    except pymysql.Error as err:
-        print(f"[verificar_execucao_ausente] Erro: {err}")
-        return False
-    finally:
-        cursor.close()
-        conn.close()
+#def verificar_execucao_ausente():
+#    try:
+#        conn = pymysql.connect(**db_config)
+#        cursor = conn.cursor()
+#        query = """
+#        CREATE TABLE IF NOT EXISTS sai_tracking_log_TEST (
+#            id INT AUTO_INCREMENT PRIMARY KEY,
+#            order_id INT NOT NULL,
+#            provider_id INT NOT NULL,
+#            event_type VARCHAR(50) NOT NULL,
+#            event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+#            metadata JSON,
+#            INDEX (order_id),
+#            INDEX (event_type)
+#        )
+#        """
+#        cursor.execute(query)
+#        resultado = cursor.fetchone()
+#        return resultado[0] == 0
+#    except pymysql.Error as err:
+#        print(f"[verificar_execucao_ausente] Erro: {err}")
+#        return False
+#    finally:
+#        cursor.close()
+#        conn.close()
 
 def query_offers_sent():
     """
@@ -171,4 +171,68 @@ def query_offers_sent():
             desenvolvimento_bi.sai_event_log
         WHERE
             event_type = 'OFFER_SENT'
+    """
+def query_offline_providers_with_history(user_ids: list):
+    """
+    Retorna uma query SQL que encontra entregadores OFFLINE que completaram
+    entregas para uma lista de lojas (user_ids) nos últimos 7 dias.
+    Query corrigida com base na análise do DBeaver.
+    """
+    if not user_ids:
+        # Se a lista de lojas estiver vazia, retorna uma query que não trará resultados.
+        return "SELECT provider_id FROM giross_producao.providers WHERE 1=0;"
+
+    user_ids_str = f"({', '.join(map(str, user_ids))})"
+
+    return f"""
+        -- Etapa 1: Encontrar entregadores que já completaram entregas para as lojas de interesse.
+        WITH providers_with_history AS (
+            SELECT DISTINCT
+                ur.provider_id
+            FROM
+                giross_producao.user_requests ur
+            WHERE
+                -- Filtra apenas pelas lojas que têm corridas travadas AGORA.
+                ur.user_id IN {user_ids_str}
+                -- Condição principal: Apenas corridas concluídas com sucesso ('COMPLETED').
+                AND ur.status = 'COMPLETED'
+                -- Filtra pelo histórico dos últimos 7 dias.
+                AND ur.original_created_at >= NOW() - INTERVAL 31 DAY
+                AND ur.provider_id IS NOT NULL AND ur.provider_id > 0
+        ),
+        -- Etapa 2: Obter os releases dos últimos 14 dias para cálculo de score.
+        provider_releases AS (
+            SELECT
+                provider_id,
+                COUNT(id) AS total_releases
+            FROM
+                giross_producao.provider_cancelled_user_requests
+            WHERE
+                created_at >= NOW() - INTERVAL 14 DAY
+            GROUP BY
+                1
+        )
+        -- Etapa Final: Buscar as informações completas dos entregadores encontrados.
+        SELECT
+            p.id AS provider_id,
+            CONCAT(p.first_name, ' ', p.last_name) AS provider_name,
+            p.mobile,
+            ps.status AS online_status,
+            p.latitude,
+            p.longitude,
+            score.score,
+            COALESCE(pr.total_releases, 0) AS total_releases_last_2_weeks
+        FROM
+            giross_producao.providers p
+            -- Junta com a lista de entregadores relevantes que encontramos na Etapa 1.
+            INNER JOIN providers_with_history ph ON p.id = ph.provider_id
+            -- Junta para buscar o status de serviço atual.
+            INNER JOIN giross_producao.provider_services ps ON p.id = ps.provider_id
+            LEFT JOIN giross_producao.provider_scores score ON p.id = score.provider_id
+            LEFT JOIN provider_releases pr ON p.id = pr.provider_id
+        WHERE
+            -- Filtro final: Garante que estamos trazendo apenas os que estão offline ou inativos.
+            ps.status IN ('inactive', 'offline')
+        ORDER BY
+            score DESC;
     """
