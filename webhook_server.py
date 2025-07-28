@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from internal_api import login, assign_order
 from log_db import log_sai_event
 from datetime import datetime
+from db import read_data_from_db
+from query import query_order_status
 
 load_dotenv()
 app = Flask(__name__)
@@ -25,14 +27,11 @@ def receive_message():
     """
     Recebe a resposta do provedor, registra o evento e toma a ação apropriada.
     """
-
-    # --- NOVO LOG DE DIAGNÓSTICO AQUI ---
     print("\n" + "="*50)
     print(f">>> ROTA /webhook ACIONADA ÀS {datetime.now()} <<<")
     print(f"INFO: Método da Requisição: {request.method}")
     print(f"INFO: IP de Origem: {request.remote_addr}")
     print("="*50)
-    # --- FIM DO LOG DE DIAGNÓSTICO ---
 
     data = request.json
     print("\n" + "="*50)
@@ -50,29 +49,46 @@ def receive_message():
         print("ERRO: 'order_id' ou 'provider_id' não encontrados nos campos personalizados.")
         return jsonify({"status": "error", "message": "Missing required custom fields"}), 400
 
-    # Converte para inteiros para o logging
     order_id_int = int(order_id)
     provider_id_int = int(provider_id)
 
-    # --- LÓGICA DE LOGGING E DECISÃO ---
     if response_status == 'Resposta_sim':
-        print(f"INFO: Provedor {provider_id} ACEITOU a ordem {order_id}.")
+        print(f"INFO: Provedor {provider_id_int} ACEITOU a ordem {order_id_int}.")
         log_sai_event(order_id_int, provider_id_int, 'PROVIDER_ACCEPTED')
         
+        # --- INÍCIO DA NOVA LÓGICA DE VERIFICAÇÃO ---
+        print(f"INFO: Verificando o status atual da ordem {order_id_int} no banco de dados...")
+        order_status_df = read_data_from_db(query_order_status(order_id_int))
+
+        if order_status_df is None or order_status_df.empty:
+            print(f"ERRO: Não foi possível encontrar a ordem {order_id_int} no banco de dados para verificação.")
+            log_sai_event(order_id_int, provider_id_int, 'VERIFICATION_FAILED_NOT_FOUND')
+            return jsonify({"status": "error", "message": "Order not found for verification"}), 404
+
+        current_provider_id = order_status_df.iloc[0]['provider_id']
+
+        # Verifica se a corrida já foi atribuída (provider_id diferente de 0 ou 1266)
+        if current_provider_id not in [0, 1266]:
+            print(f"INFO: A ordem {order_id_int} já foi atribuída ao provedor {current_provider_id}. Esta oferta não está mais disponível para o provedor {provider_id_int}.")
+            log_sai_event(order_id_int, provider_id_int, 'ORDER_ALREADY_TAKEN')
+            return jsonify({"status": "success", "message": "Order already assigned to another provider"}), 200
+        
+        print(f"INFO: A ordem {order_id_int} está disponível. Tentando atribuir ao provedor {provider_id_int}...")
+        # --- FIM DA NOVA LÓGICA DE VERIFICAÇÃO ---
+
         access_token = login(GIROSS_EMAIL, GIROSS_PASSWORD)
         
         if access_token:
             success = assign_order(access_token, provider_id_int, order_id_int)
-            # Log do resultado da atribuição
             if success:
                 log_sai_event(order_id_int, provider_id_int, 'ASSIGNMENT_SUCCESS')
             else:
                 log_sai_event(order_id_int, provider_id_int, 'ASSIGNMENT_FAILURE')
         else:
             print("ERRO: Não foi possível atribuir a ordem devido a falha no login.")
+            log_sai_event(order_id_int, provider_id_int, 'ASSIGNMENT_FAILURE_LOGIN')
             
     else:
-        # Se a resposta for qualquer outra coisa, registra como rejeição
         log_sai_event(order_id_int, provider_id_int, 'PROVIDER_REJECTED')
         find_next_provider_and_send_offer(order_id, provider_id)
         

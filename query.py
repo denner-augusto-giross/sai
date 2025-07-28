@@ -236,3 +236,12 @@ def query_offline_providers_with_history(user_ids: list):
         ORDER BY
             score DESC;
     """
+def query_order_status(order_id: int):
+    """
+    Retorna uma query SQL para verificar o provider_id atual de uma corrida.
+    """
+    return f"""
+        SELECT provider_id 
+        FROM giross_producao.user_requests 
+        WHERE id = {order_id};
+    """
