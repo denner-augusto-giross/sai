@@ -14,7 +14,7 @@ from log_db import log_sai_event, read_log_data
 pd.set_option('display.max_columns', None)
 
 # --- CONFIGURAÇÕES GLOBAIS ---
-CITIES_TO_PROCESS = [193, 162, 171, 150, 163, 145, 265, 151, 623, 445, 70, 485, 154, 277, 157, 164, 156, 252]
+CITIES_TO_PROCESS = [49, 69, 70, 97, 145, 150, 151, 154, 156, 157, 162, 163, 164, 171, 193, 247, 252, 265, 268, 277, 387, 445, 457, 485, 623]
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
 AVG_SPEED_KMH = 25
 MAX_OFFERS_PER_ORDER = 2
