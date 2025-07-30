@@ -6,17 +6,25 @@ from time import sleep
 from dotenv import load_dotenv
 from chatguru_api import ChatguruWABA
 from db import read_data_from_db
-from query import query_stuck_orders, query_available_providers, query_blocked_pairs, query_offers_sent, query_offline_providers_with_history
+from query import query_stuck_orders, query_available_providers, query_blocked_pairs, query_offers_sent, query_offline_providers_with_history, query_responsive_providers
 from geopy.distance import geodesic
 import pandas as pd
 from log_db import log_sai_event, read_log_data
 
 pd.set_option('display.max_columns', None)
 
+# --- CONFIGURAÇÕES GLOBAIS ---
 CITIES_TO_PROCESS = [193, 162, 171, 150, 163, 145, 265, 151, 623, 445, 70, 485, 154, 277, 157, 164, 156, 252]
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
 AVG_SPEED_KMH = 25
 MAX_OFFERS_PER_ORDER = 2
+
+# --- NOVA VARIÁVEL DE CONTROLE ---
+# Defina como 'True' para enviar ofertas apenas a provedores que já responderam.
+# Defina como 'False' para enviar a todos os provedores elegíveis.
+FILTER_ONLY_ACTIVE_PROVIDERS = True
+# ---------------------------------
+
 
 def run_offer_workflow(chat_number, match_data, template_params):
     """
@@ -121,20 +129,34 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
         print("INFO: Nenhuma corrida travada encontrada. Finalizando execução.")
         return
 
-    # 1. BUSCAR OS DOIS GRUPOS DE ENTREGADORES
     online_providers_df = read_data_from_db(query_available_providers())
-    
     store_ids = stuck_orders_df['user_id'].unique().tolist()
     offline_providers_df = read_data_from_db(query_offline_providers_with_history(store_ids))
     
-    # 2. ATRIBUIR PRIORIDADE E JUNTAR OS DATAFRAMES
     if online_providers_df is not None:
-        online_providers_df['offer_priority'] = 1 # Prioridade máxima para online
+        online_providers_df['offer_priority'] = 1
     if offline_providers_df is not None:
-        offline_providers_df['offer_priority'] = 2 # Prioridade menor para offline
+        offline_providers_df['offer_priority'] = 2
 
     providers_df = pd.concat([online_providers_df, offline_providers_df], ignore_index=True)
     
+    # --- NOVA LÓGICA DE FILTRAGEM POR PROVEDORES ATIVOS ---
+    if FILTER_ONLY_ACTIVE_PROVIDERS:
+        print("\nINFO: Filtro de provedores ativos está LIGADO.")
+        responsive_providers_df = read_log_data(query_responsive_providers())
+        
+        if responsive_providers_df is not None and not responsive_providers_df.empty:
+            active_provider_ids = responsive_providers_df['provider_id'].tolist()
+            initial_provider_count = len(providers_df)
+            providers_df = providers_df[providers_df['provider_id'].isin(active_provider_ids)]
+            print(f"INFO: {initial_provider_count} provedores totais -> {len(providers_df)} provedores ativos encontrados e filtrados.")
+        else:
+            print("AVISO: Nenhum provedor ativo encontrado no log. Nenhuma oferta será enviada.")
+            providers_df = pd.DataFrame()
+    else:
+        print("\nINFO: Filtro de provedores ativos está DESLIGADO. Considerando todos os provedores elegíveis.")
+    # --- FIM DA NOVA LÓGICA ---
+
     blocked_pairs_df = read_data_from_db(query_blocked_pairs())
     offers_sent_df = read_log_data(query_offers_sent())
     
@@ -146,7 +168,7 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
     print(f"INFO: Encontrados {len(offline_providers_df if offline_providers_df is not None else 0)} entregadores offline com histórico recente.")
     
     if providers_df.empty:
-        print("INFO: Nenhum entregador (online ou offline) encontrado. Finalizando.")
+        print("INFO: Nenhum entregador elegível após os filtros. Finalizando.")
         return
 
     providers_df['mobile'] = providers_df['mobile'].apply(clean_and_format_phone)
@@ -190,7 +212,6 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
         valid_combinations_df['distance_km'] = valid_combinations_df.apply(calculate_distance, axis=1)
         nearby_providers_df = valid_combinations_df[valid_combinations_df['distance_km'] <= 10].copy()
         
-        # 3. ATUALIZAR A ORDENAÇÃO PARA USAR A NOVA PRIORIDADE
         nearby_providers_df.sort_values(
             by=['order_id', 'offer_priority', 'distance_km', 'total_releases_last_2_weeks', 'score'],
             ascending=[True, True, True, True, False],
@@ -227,7 +248,6 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
                         print("-" * 50)
                 except Exception as e:
                     print(f"ERRO ao processar o match para a ordem {match_data.get('order_id')}: {e}")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sistema de Assignação Inteligente (SAI)")
