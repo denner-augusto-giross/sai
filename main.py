@@ -210,7 +210,7 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
             return geodesic(order_coords, provider_coords).kilometers
         
         valid_combinations_df['distance_km'] = valid_combinations_df.apply(calculate_distance, axis=1)
-        nearby_providers_df = valid_combinations_df[valid_combinations_df['distance_km'] <= 10].copy()
+        nearby_providers_df = valid_combinations_df[valid_combinations_df['distance_km'] <= 5].copy()
         
         nearby_providers_df.sort_values(
             by=['order_id', 'offer_priority', 'distance_km', 'total_releases_last_2_weeks', 'score'],
