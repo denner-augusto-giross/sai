@@ -89,3 +89,35 @@ def read_log_data(query: str):
     finally:
         if db_connection:
             db_connection.close()
+    
+def write_dataframe_to_db(df, table_name: str):
+    """
+    Conecta-se ao banco de dados de log e salva um DataFrame pandas em uma tabela.
+    A tabela será criada se não existir, e os dados serão anexados.
+    """
+    load_dotenv()
+    
+    host = os.getenv('LOG_DB_HOST')
+    user = os.getenv('LOG_DB_USER')
+    password = os.getenv('LOG_DB_PASSWORD')
+    port = int(os.getenv('LOG_DB_PORT'))
+    db_name = os.getenv('LOG_DB_NAME')
+
+    if not all([host, user, password, port, db_name]):
+        print(f"ERRO DE ESCRITA DE LOG: Verifique as variáveis LOG_DB_* no .env.")
+        return False
+
+    try:
+        # Usando SQLAlchemy para uma escrita de DataFrame mais robusta
+        from sqlalchemy import create_engine
+        engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}")
+        
+        print(f"INFO: Escrevendo {len(df)} registros na tabela '{table_name}'...")
+        # 'append' adiciona os dados. Se a tabela não existir, 'to_sql' a cria.
+        df.to_sql(table_name, con=engine, if_exists='append', index=False)
+        print("INFO: Escrita no banco de dados concluída com sucesso.")
+        return True
+
+    except Exception as err:
+        print(f"ERRO DE ESCRITA DE LOG: Falha ao escrever na tabela '{table_name}': {err}")
+        return False

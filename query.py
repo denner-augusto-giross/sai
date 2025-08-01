@@ -227,3 +227,44 @@ def query_order_status(order_id: int):
         FROM giross_producao.user_requests 
         WHERE id = {order_id};
     """
+
+def query_accepted_offers_log():
+    """
+    Retorna uma query que busca todos os eventos de 'PROVIDER_ACCEPTED' do log,
+    incluindo o order_id, provider_id e o timestamp do aceite.
+    """
+    return """
+        SELECT
+            order_id,
+            provider_id,
+            event_timestamp AS accepted_at
+        FROM
+            desenvolvimento_bi.sai_event_log
+        WHERE
+            event_type = 'PROVIDER_ACCEPTED';
+    """
+
+def query_order_details_by_ids(order_ids: list):
+    """
+    Retorna uma query que busca detalhes e o status final de uma lista
+    específica de order_ids do banco de produção.
+    """
+    if not order_ids:
+        return "SELECT id FROM giross_producao.user_requests WHERE 1=0;"
+
+    order_ids_str = f"({', '.join(map(str, order_ids))})"
+
+    return f"""
+        SELECT
+            ur.id AS order_id,
+            ur.status AS final_status,
+            c.name AS city_name,
+            ur.original_created_at AS created_at,
+            ur.finished_at AS completed_at -- CORRIGIDO: Usando 'finished_at' que é a coluna correta
+        FROM
+            giross_producao.user_requests ur
+        LEFT JOIN
+            giross_producao.cities c ON ur.city_id = c.id
+        WHERE
+            ur.id IN {order_ids_str};
+    """
