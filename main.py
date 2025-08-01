@@ -9,7 +9,7 @@ from db import read_data_from_db
 from query import (
     query_stuck_orders, query_available_providers, query_blocked_pairs, 
     query_offers_sent, query_offline_providers_with_history, 
-    query_responsive_providers, query_fixed_providers # Adicionada nova importação
+    query_responsive_providers, query_fixed_providers
 )
 from geopy.distance import geodesic
 import pandas as pd
@@ -23,16 +23,15 @@ DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a"
 AVG_SPEED_KMH = 25
 MAX_OFFERS_PER_ORDER = 2
 
-# --- NOVA VARIÁVEL DE CONTROLE ---
-# Defina como 'True' para enviar ofertas apenas a provedores que já responderam.
-# Defina como 'False' para enviar a todos os provedores elegíveis.
+# --- VARIÁVEL DE CONTROLE PARA OTIMIZAÇÃO DE CUSTO ---
 FILTER_ONLY_ACTIVE_PROVIDERS = True
-# ---------------------------------
+# ---------------------------------------------------------
 
 
 def run_offer_workflow(chat_number, match_data, template_params):
     """
     Executa o fluxo completo, com verificação de status do chat e logging.
+    Retorna a resposta da API do Chatguru.
     """
     load_dotenv()
     chat_key = os.getenv("CHAT_GURU_KEY")
@@ -42,7 +41,7 @@ def run_offer_workflow(chat_number, match_data, template_params):
 
     if not all([chat_key, chat_account_id, chat_phone_id, chat_url]):
         print("ERRO: Credenciais do Chatguru não encontradas no .env")
-        return
+        return None # Retorna None em caso de erro
 
     api = ChatguruWABA(chat_key, chat_account_id, chat_phone_id, chat_url)
     
@@ -52,7 +51,7 @@ def run_offer_workflow(chat_number, match_data, template_params):
     chat_add_id = register_response.get('chat_add_id')
     if not chat_add_id:
         print(f"ERRO: Falha ao iniciar o registro do chat para {chat_number}. Resposta: {register_response}")
-        return
+        return None
 
     final_chat_number = chat_number
     for i in range(5):
@@ -76,33 +75,23 @@ def run_offer_workflow(chat_number, match_data, template_params):
         
         if chat_status != 'pending':
             print(f"ERRO: O registro do chat falhou com o status '{chat_status}'. Descrição: {description}")
-            return
+            return None
         sleep(3)
     else:
         print(f"ERRO: Timeout. O registro do chat para {chat_number} não foi concluído após 15 segundos.")
-        return
+        return None
 
     print(f"Etapa 2: Atualizando campos personalizados para o chat {final_chat_number}...")
     custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
     api.update_custom_fields(final_chat_number, custom_fields)
 
+    dialog_response = None # Inicializa a variável
     if DIALOG_ID_PARA_OFERTA:
         print(f"Etapa 3: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
         dialog_response = api.execute_dialog(final_chat_number, DIALOG_ID_PARA_OFERTA, template_params)
         print(f"Resposta da Execução do Diálogo para {final_chat_number}:", dialog_response)
-        
-        if dialog_response and dialog_response.get('result') == 'success':
-            log_metadata = {
-                "distance_to_store_km": match_data.get('distance_km'),
-                "provider_score": match_data.get('score'),
-                "provider_releases": match_data.get('total_releases_last_2_weeks')
-            }
-            log_sai_event(
-                order_id=match_data['order_id'],
-                provider_id=match_data['provider_id'],
-                event_type='OFFER_SENT',
-                metadata=log_metadata
-            )
+    
+    return dialog_response # Retorna a resposta da API
 
 def clean_and_format_phone(phone_number):
     """
@@ -143,7 +132,6 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
 
     providers_df = pd.concat([online_providers_df, offline_providers_df], ignore_index=True)
     
-    # --- NOVO PASSO: FILTRAR PROVEDORES FIXOS ---
     print("\nINFO: Buscando e removendo provedores fixos da lista de ofertas...")
     fixed_providers_df = read_data_from_db(query_fixed_providers())
     if fixed_providers_df is not None and not fixed_providers_df.empty:
@@ -153,7 +141,6 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
         print(f"INFO: {len(fixed_provider_ids)} provedores fixos encontrados e removidos. {initial_count} -> {len(providers_df)} provedores restantes.")
     else:
         print("INFO: Nenhum provedor fixo ativo encontrado.")
-    # --- FIM DO NOVO PASSO ---
 
     if FILTER_ONLY_ACTIVE_PROVIDERS:
         print("\nINFO: Filtro de provedores ativos está LIGADO.")
@@ -256,9 +243,28 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
                     template_params = [param1, param2, param3, param4]
                     
                     recipient_phone_number = test_number if test_number else match_data.get('mobile')
+                    
                     if recipient_phone_number:
-                        run_offer_workflow(recipient_phone_number, match_data, template_params)
+                        # --- INÍCIO DA CORREÇÃO ---
+                        # 1. Chamar a função e armazenar a resposta
+                        dialog_response = run_offer_workflow(recipient_phone_number, match_data, template_params)
                         print("-" * 50)
+
+                        # 2. Verificar a resposta ANTES de tentar usá-la para o log
+                        if dialog_response and dialog_response.get('result') == 'success':
+                            log_metadata = {
+                                "distance_to_store_km": match_data.get('distance_km'),
+                                "provider_score": match_data.get('score'),
+                                "provider_releases": match_data.get('total_releases_last_2_weeks'),
+                                "offer_priority": match_data.get('offer_priority')
+                            }
+                            log_sai_event(
+                                order_id=match_data['order_id'],
+                                provider_id=match_data['provider_id'],
+                                event_type='OFFER_SENT',
+                                metadata=log_metadata
+                            )
+                        # --- FIM DA CORREÇÃO ---
                 except Exception as e:
                     print(f"ERRO ao processar o match para a ordem {match_data.get('order_id')}: {e}")
 
