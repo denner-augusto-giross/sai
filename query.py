@@ -153,6 +153,17 @@ def query_responsive_providers():
         WHERE event_type IN ('PROVIDER_ACCEPTED', 'PROVIDER_REJECTED');
     """
 
+def query_fixed_providers():
+    """
+    Retorna uma query SQL que busca os IDs de todos os provedores
+    que são 'fixos' e não foram desvinculados (deleted_at IS NULL).
+    """
+    return """
+        SELECT DISTINCT provider_id
+        FROM giross_producao.provider_fixeds
+        WHERE deleted_at IS NULL;
+    """
+
 def query_offline_providers_with_history(user_ids: list):
     """
     Retorna uma query SQL que encontra entregadores OFFLINE que completaram

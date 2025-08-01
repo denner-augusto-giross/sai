@@ -6,7 +6,11 @@ from time import sleep
 from dotenv import load_dotenv
 from chatguru_api import ChatguruWABA
 from db import read_data_from_db
-from query import query_stuck_orders, query_available_providers, query_blocked_pairs, query_offers_sent, query_offline_providers_with_history, query_responsive_providers
+from query import (
+    query_stuck_orders, query_available_providers, query_blocked_pairs, 
+    query_offers_sent, query_offline_providers_with_history, 
+    query_responsive_providers, query_fixed_providers # Adicionada nova importação
+)
 from geopy.distance import geodesic
 import pandas as pd
 from log_db import log_sai_event, read_log_data
@@ -117,8 +121,7 @@ def clean_and_format_phone(phone_number):
 
 def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
     """
-    Encapsula toda a lógica de busca, correspondência e oferta,
-    incluindo a nova lógica para provedores offline com histórico.
+    Encapsula toda a lógica de busca, correspondência e oferta.
     """
     cities_str = ', '.join(map(str, CITIES_TO_PROCESS))
     print(f"--- A INICIAR LÓGICA DO SAI PARA AS CIDADES: {cities_str} ---")
@@ -140,7 +143,18 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
 
     providers_df = pd.concat([online_providers_df, offline_providers_df], ignore_index=True)
     
-    # --- NOVA LÓGICA DE FILTRAGEM POR PROVEDORES ATIVOS ---
+    # --- NOVO PASSO: FILTRAR PROVEDORES FIXOS ---
+    print("\nINFO: Buscando e removendo provedores fixos da lista de ofertas...")
+    fixed_providers_df = read_data_from_db(query_fixed_providers())
+    if fixed_providers_df is not None and not fixed_providers_df.empty:
+        fixed_provider_ids = fixed_providers_df['provider_id'].tolist()
+        initial_count = len(providers_df)
+        providers_df = providers_df[~providers_df['provider_id'].isin(fixed_provider_ids)]
+        print(f"INFO: {len(fixed_provider_ids)} provedores fixos encontrados e removidos. {initial_count} -> {len(providers_df)} provedores restantes.")
+    else:
+        print("INFO: Nenhum provedor fixo ativo encontrado.")
+    # --- FIM DO NOVO PASSO ---
+
     if FILTER_ONLY_ACTIVE_PROVIDERS:
         print("\nINFO: Filtro de provedores ativos está LIGADO.")
         responsive_providers_df = read_log_data(query_responsive_providers())
@@ -155,7 +169,6 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
             providers_df = pd.DataFrame()
     else:
         print("\nINFO: Filtro de provedores ativos está DESLIGADO. Considerando todos os provedores elegíveis.")
-    # --- FIM DA NOVA LÓGICA ---
 
     blocked_pairs_df = read_data_from_db(query_blocked_pairs())
     offers_sent_df = read_log_data(query_offers_sent())
