@@ -4,17 +4,18 @@ import time
 from datetime import datetime, timedelta
 from croniter import croniter
 from main import execute_sai_logic
-from analytics_etl import run_analytics_etl # <-- Nova importação
+from analytics_etl import run_analytics_etl
+from create_sent_offers_analytics import run_sent_offers_etl # <-- Nova importação
 
 # Expressão de cron para agendar a tarefa principal a cada 5 minutos.
 CRON_EXPRESSION = "*/5 * * * *" 
 
-# Variável para controlar a última vez que o ETL de análise foi executado
+# Variável para controlar a última vez que os ETLs de análise foram executados
 last_etl_run_time = None
 
 def main():
     """
-    Loop para executar o cronjob indefinidamente, com um gatilho diário para o ETL.
+    Loop para executar o cronjob indefinidamente, com gatilhos diários para os ETLs.
     """
     global last_etl_run_time
     
@@ -40,18 +41,29 @@ def main():
         
         # --- LÓGICA DO GATILHO DE ETL (executa uma vez por dia) ---
         now = datetime.now()
-        # Verifica se o ETL nunca foi executado ou se já se passaram mais de 24 horas
         if last_etl_run_time is None or (now - last_etl_run_time) > timedelta(hours=24):
-            print(f"\n--- {now.strftime('%Y-%m-%d %H:%M:%S')} - INICIANDO TAREFA DE ETL DE ANÁLISE ---")
+            print(f"\n--- {now.strftime('%Y-%m-%d %H:%M:%S')} - INICIANDO TAREFAS DE ETL DIÁRIAS ---")
+            
+            # Executa o ETL de Performance (Ofertas Aceitas vs. Completadas)
             try:
+                print("\n-> Executando ETL de Performance...")
                 run_analytics_etl()
-                last_etl_run_time = now # Atualiza o timestamp da última execução bem-sucedida
-                print("--- TAREFA DE ETL DE ANÁLISE CONCLUÍDA. ---")
+                print("-> ETL de Performance concluído.")
             except Exception as e:
-                print(f"ERRO: Ocorreu um erro ao executar a tarefa de ETL: {e}")
+                print(f"ERRO no ETL de Performance: {e}")
+
+            # Executa o novo ETL de Ofertas Enviadas
+            try:
+                print("\n-> Executando ETL de Ofertas Enviadas...")
+                run_sent_offers_etl()
+                print("-> ETL de Ofertas Enviadas concluído.")
+            except Exception as e:
+                print(f"ERRO no ETL de Ofertas Enviadas: {e}")
+
+            last_etl_run_time = now # Atualiza o timestamp após a tentativa de ambos
+            print("--- TAREFAS DE ETL DIÁRIAS CONCLUÍDAS. ---")
         
         base_time = datetime.now()
 
 if __name__ == "__main__":
     main()
-

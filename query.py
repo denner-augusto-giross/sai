@@ -268,3 +268,18 @@ def query_order_details_by_ids(order_ids: list):
         WHERE
             ur.id IN {order_ids_str};
     """
+def query_sent_offers_log():
+    """
+    Retorna uma query que busca todos os eventos de 'OFFER_SENT' do log,
+    incluindo o order_id, provider_id e o timestamp do envio.
+    """
+    return """
+        SELECT
+            order_id,
+            provider_id,
+            event_timestamp AS sent_at
+        FROM
+            desenvolvimento_bi.sai_event_log
+        WHERE
+            event_type = 'OFFER_SENT';
+    """
