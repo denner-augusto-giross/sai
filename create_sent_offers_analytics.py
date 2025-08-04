@@ -4,7 +4,7 @@ import pandas as pd
 from db import read_data_from_db
 from log_db import read_log_data, write_dataframe_to_db
 from query import query_sent_offers_log, query_order_details_by_ids
-from sqlalchemy import create_engine, text # <-- Adicionar importação de 'text'
+from sqlalchemy import create_engine
 from dotenv import load_dotenv
 import os
 
@@ -59,17 +59,22 @@ def run_sent_offers_etl():
     
     try:
         engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}")
-        with engine.connect() as connection:
-            print(f"INFO: Limpando a tabela '{ANALYTICS_TABLE_NAME}' antes da inserção...")
-            # --- CORREÇÃO AQUI ---
-            connection.execute(text(f"TRUNCATE TABLE {ANALYTICS_TABLE_NAME}"))
-            connection.commit() # Adicionado commit para garantir a execução do TRUNCATE
-            # ---------------------
-            print("INFO: Tabela limpa com sucesso.")
         
-        write_dataframe_to_db(analytics_df, ANALYTICS_TABLE_NAME)
+        # --- CORREÇÃO AQUI ---
+        # A estratégia 'replace' lida com a criação da tabela na primeira vez
+        # e com a limpeza (DROP/CREATE/INSERT) nas execuções seguintes.
+        print(f"INFO: Recriando e populando a tabela '{ANALYTICS_TABLE_NAME}'...")
+        analytics_df.to_sql(
+            ANALYTICS_TABLE_NAME, 
+            con=engine, 
+            if_exists='replace', # 'replace' irá dropar a tabela se existir e criar uma nova
+            index=False
+        )
+        print("INFO: Tabela de análise atualizada com sucesso.")
+        # ---------------------
+
     except Exception as e:
-        print(f"ERRO: Falha ao limpar ou carregar dados na tabela de análise: {e}")
+        print(f"ERRO: Falha ao carregar dados na tabela de análise: {e}")
         return
 
     print("\n--- PROCESSO DE ETL DE OFERTAS ENVIADAS CONCLUÍDO COM SUCESSO! ---")
