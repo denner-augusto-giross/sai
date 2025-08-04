@@ -4,7 +4,7 @@ import pandas as pd
 from db import read_data_from_db
 from log_db import read_log_data, write_dataframe_to_db
 from query import query_accepted_offers_log, query_order_details_by_ids
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text # <-- Adicionar importação de 'text'
 from dotenv import load_dotenv
 import os
 
@@ -50,7 +50,6 @@ def run_analytics_etl():
     # 4. CARGA: Escrever o resultado na tabela de análise
     print(f"ETAPA 4: Carregando os dados na tabela '{ANALYTICS_TABLE_NAME}'...")
     
-    # TRUNCATE: Limpa a tabela antes de inserir os novos dados para evitar duplicatas
     load_dotenv()
     host = os.getenv('LOG_DB_HOST')
     user = os.getenv('LOG_DB_USER')
@@ -62,7 +61,10 @@ def run_analytics_etl():
         engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}")
         with engine.connect() as connection:
             print(f"INFO: Limpando a tabela '{ANALYTICS_TABLE_NAME}' antes da inserção...")
-            connection.execute(f"TRUNCATE TABLE {ANALYTICS_TABLE_NAME}")
+            # --- CORREÇÃO AQUI ---
+            connection.execute(text(f"TRUNCATE TABLE {ANALYTICS_TABLE_NAME}"))
+            connection.commit() # Adicionado commit para garantir a execução do TRUNCATE
+            # ---------------------
             print("INFO: Tabela limpa com sucesso.")
         
         write_dataframe_to_db(performance_df, ANALYTICS_TABLE_NAME)
@@ -73,7 +75,6 @@ def run_analytics_etl():
     print("\n--- PROCESSO DE ETL CONCLUÍDO COM SUCESSO! ---")
 
 if __name__ == "__main__":
-    # Permite que o script seja executado manualmente para testes ou backfill inicial
     try:
         import sqlalchemy
     except ImportError:

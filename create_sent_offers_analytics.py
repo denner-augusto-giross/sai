@@ -4,7 +4,7 @@ import pandas as pd
 from db import read_data_from_db
 from log_db import read_log_data, write_dataframe_to_db
 from query import query_sent_offers_log, query_order_details_by_ids
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text # <-- Adicionar importação de 'text'
 from dotenv import load_dotenv
 import os
 
@@ -61,7 +61,10 @@ def run_sent_offers_etl():
         engine = create_engine(f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}")
         with engine.connect() as connection:
             print(f"INFO: Limpando a tabela '{ANALYTICS_TABLE_NAME}' antes da inserção...")
-            connection.execute(f"TRUNCATE TABLE {ANALYTICS_TABLE_NAME}")
+            # --- CORREÇÃO AQUI ---
+            connection.execute(text(f"TRUNCATE TABLE {ANALYTICS_TABLE_NAME}"))
+            connection.commit() # Adicionado commit para garantir a execução do TRUNCATE
+            # ---------------------
             print("INFO: Tabela limpa com sucesso.")
         
         write_dataframe_to_db(analytics_df, ANALYTICS_TABLE_NAME)
