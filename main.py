@@ -52,7 +52,7 @@ def run_offer_workflow(chat_number, match_data, template_params):
     chat_add_id = register_response.get('chat_add_id')
     if not chat_add_id:
         print(f"ERRO: Falha ao iniciar o registro do chat para {chat_number}. Resposta: {register_response}")
-        return None
+        return register_response
 
     final_chat_number = chat_number
     for i in range(5):
@@ -76,11 +76,11 @@ def run_offer_workflow(chat_number, match_data, template_params):
         
         if chat_status != 'pending':
             print(f"ERRO: O registro do chat falhou com o status '{chat_status}'. Descrição: {description}")
-            return None
+            return status_response
         sleep(3)
     else:
         print(f"ERRO: Timeout. O registro do chat para {chat_number} não foi concluído após 15 segundos.")
-        return None
+        return {"result": "error", "description": "Timeout on chat registration"}
 
     print(f"Etapa 2: Atualizando campos personalizados para o chat {final_chat_number}...")
     custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
@@ -246,26 +246,36 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
                     recipient_phone_number = test_number if test_number else match_data.get('mobile')
                     
                     if recipient_phone_number:
-                        # --- INÍCIO DA CORREÇÃO ---
-                        # 1. Chamar a função e armazenar a resposta
+                        # --- INÍCIO DA LÓGICA DE LOG ATUALIZADA ---
                         dialog_response = run_offer_workflow(recipient_phone_number, match_data, template_params)
                         print("-" * 50)
 
-                        # 2. Verificar a resposta ANTES de tentar usá-la para o log
+                        log_metadata = {
+                            "distance_to_store_km": match_data.get('distance_km'),
+                            "provider_score": match_data.get('score'),
+                            "provider_releases": match_data.get('total_releases_last_2_weeks'),
+                            "offer_priority": match_data.get('offer_priority')
+                        }
+
+                        # Verifica a resposta da API antes de decidir qual evento logar
                         if dialog_response and dialog_response.get('result') == 'success':
-                            log_metadata = {
-                                "distance_to_store_km": match_data.get('distance_km'),
-                                "provider_score": match_data.get('score'),
-                                "provider_releases": match_data.get('total_releases_last_2_weeks'),
-                                "offer_priority": match_data.get('offer_priority')
-                            }
+                            # Loga como SUCESSO apenas se a API do Chatguru confirmar o envio
                             log_sai_event(
                                 order_id=match_data['order_id'],
                                 provider_id=match_data['provider_id'],
                                 event_type='OFFER_SENT',
                                 metadata=log_metadata
                             )
-                        # --- FIM DA CORREÇÃO ---
+                        else:
+                            # Loga como FALHA se a API retornar erro, incluindo a resposta do erro nos metadados
+                            log_metadata['api_error_response'] = dialog_response
+                            log_sai_event(
+                                order_id=match_data['order_id'],
+                                provider_id=match_data['provider_id'],
+                                event_type='OFFER_DELIVERY_FAILURE',
+                                metadata=log_metadata
+                            )
+                        # --- FIM DA LÓGICA DE LOG ATUALIZADA ---
                 except Exception as e:
                     print(f"ERRO ao processar o match para a ordem {match_data.get('order_id')}: {e}")
 
