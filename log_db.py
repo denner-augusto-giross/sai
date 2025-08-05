@@ -121,3 +121,45 @@ def write_dataframe_to_db(df, table_name: str):
     except Exception as err:
         print(f"ERRO DE ESCRITA DE LOG: Falha ao escrever na tabela '{table_name}': {err}")
         return False
+    
+def update_city_last_run(city_id: int):
+    """
+    Atualiza o campo 'last_run_timestamp' para o horário atual para uma
+    cidade específica na tabela de configurações.
+    """
+    load_dotenv()
+    
+    host = os.getenv('LOG_DB_HOST')
+    user = os.getenv('LOG_DB_USER')
+    password = os.getenv('LOG_DB_PASSWORD')
+    port = int(os.getenv('LOG_DB_PORT'))
+    db_name = os.getenv('LOG_DB_NAME')
+
+    if not all([host, user, password, port, db_name]):
+        print(f"ERRO DE ATUALIZAÇÃO DE LOG: Verifique as variáveis LOG_DB_* para a cidade {city_id}.")
+        return
+
+    db_connection = None
+    cursor = None
+    try:
+        db_connection = pymysql.connect(
+            host=host, user=user, password=password, database=db_name,
+            port=int(port), connect_timeout=15
+        )
+        cursor = db_connection.cursor()
+        
+        query = "UPDATE sai_city_configs SET last_run_timestamp = NOW() WHERE city_id = %s"
+        
+        cursor.execute(query, (city_id,))
+        db_connection.commit()
+        
+        print(f"LOG: Timestamp de execução atualizado para a cidade {city_id}.")
+
+    except pymysql.Error as err:
+        print(f"ERRO DE ATUALIZAÇÃO DE LOG: Falha ao atualizar o timestamp para a cidade {city_id}: {err}")
+
+    finally:
+        if cursor:
+            cursor.close()
+        if db_connection:
+            db_connection.close()

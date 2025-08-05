@@ -9,7 +9,7 @@ from db import read_data_from_db
 from query import (
     query_stuck_orders, query_available_providers, query_blocked_pairs, 
     query_offers_sent, query_offline_providers_with_history, 
-    query_responsive_providers, query_fixed_providers
+    query_responsive_providers, query_fixed_providers, query_sai_city_configs
 )
 from geopy.distance import geodesic
 import pandas as pd
@@ -17,14 +17,9 @@ from log_db import log_sai_event, read_log_data
 
 pd.set_option('display.max_columns', None)
 
-# --- CONFIGURAÇÕES GLOBAIS ---
-CITIES_TO_PROCESS = [49, 69, 70, 97, 145, 150, 151, 154, 156, 157, 162, 163, 164, 171, 193, 247, 252, 265, 268, 277, 387, 445, 457, 485, 623]
+# --- CONFIGURAÇÕES GLOBAIS QUE NÃO VARIAM POR CIDADE ---
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
 AVG_SPEED_KMH = 25
-MAX_OFFERS_PER_ORDER = 2
-OFFER_DISTANCE_KM = 5
-
-# --- VARIÁVEL DE CONTROLE PARA OTIMIZAÇÃO DE CUSTO ---
 FILTER_ONLY_ACTIVE_PROVIDERS = True
 # ---------------------------------------------------------
 
@@ -42,7 +37,7 @@ def run_offer_workflow(chat_number, match_data, template_params):
 
     if not all([chat_key, chat_account_id, chat_phone_id, chat_url]):
         print("ERRO: Credenciais do Chatguru não encontradas no .env")
-        return None # Retorna None em caso de erro
+        return None
 
     api = ChatguruWABA(chat_key, chat_account_id, chat_phone_id, chat_url)
     
@@ -86,13 +81,13 @@ def run_offer_workflow(chat_number, match_data, template_params):
     custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
     api.update_custom_fields(final_chat_number, custom_fields)
 
-    dialog_response = None # Inicializa a variável
+    dialog_response = None
     if DIALOG_ID_PARA_OFERTA:
         print(f"Etapa 3: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
         dialog_response = api.execute_dialog(final_chat_number, DIALOG_ID_PARA_OFERTA, template_params)
         print(f"Resposta da Execução do Diálogo para {final_chat_number}:", dialog_response)
     
-    return dialog_response # Retorna a resposta da API
+    return dialog_response
 
 def clean_and_format_phone(phone_number):
     """
@@ -109,17 +104,23 @@ def clean_and_format_phone(phone_number):
         return f"55{cleaned_number}"
     return cleaned_number
 
-def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
+def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0):
     """
-    Encapsula toda a lógica de busca, correspondência e oferta.
+    Encapsula toda a lógica de busca e oferta para UMA ÚNICA CIDADE.
     """
-    cities_str = ', '.join(map(str, CITIES_TO_PROCESS))
-    print(f"--- A INICIAR LÓGICA DO SAI PARA AS CIDADES: {cities_str} ---")
+    city_id = city_config['city_id']
+    city_name = city_config['city_name']
+    time_interval = city_config['time_interval_minutes']
+    max_offers = city_config['max_offers_per_order']
+    offer_distance = city_config['offer_distance_km']
+
+    print(f"\n--- PROCESSANDO CIDADE: {city_name} (ID: {city_id}) ---")
+    print(f"Configurações: Intervalo={time_interval}min, MaxOfertas={max_offers}, Distância={offer_distance}km")
     
-    stuck_orders_df = read_data_from_db(query_stuck_orders(CITIES_TO_PROCESS))
+    stuck_orders_df = read_data_from_db(query_stuck_orders(city_id, time_interval))
     
     if stuck_orders_df is None or stuck_orders_df.empty:
-        print("INFO: Nenhuma corrida travada encontrada. Finalizando execução.")
+        print(f"INFO: Nenhuma corrida travada encontrada para {city_name}.")
         return
 
     online_providers_df = read_data_from_db(query_available_providers())
@@ -165,11 +166,8 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
         print("AVISO: A tabela 'sai_event_log' não foi encontrada. A assumir que nenhuma oferta foi enviada.")
         offers_sent_df = pd.DataFrame(columns=['order_id', 'provider_id'])
     
-    print(f"INFO: Encontrados {len(online_providers_df if online_providers_df is not None else 0)} entregadores online.")
-    print(f"INFO: Encontrados {len(offline_providers_df if offline_providers_df is not None else 0)} entregadores offline com histórico recente.")
-    
     if providers_df.empty:
-        print("INFO: Nenhum entregador elegível após os filtros. Finalizando.")
+        print(f"INFO: Nenhum entregador elegível para {city_name} após os filtros.")
         return
 
     providers_df['mobile'] = providers_df['mobile'].apply(clean_and_format_phone)
@@ -211,7 +209,7 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
             return geodesic(order_coords, provider_coords).kilometers
         
         valid_combinations_df['distance_km'] = valid_combinations_df.apply(calculate_distance, axis=1)
-        nearby_providers_df = valid_combinations_df[valid_combinations_df['distance_km'] <= OFFER_DISTANCE_KM].copy()
+        nearby_providers_df = valid_combinations_df[valid_combinations_df['distance_km'] <= offer_distance].copy()
         
         nearby_providers_df.sort_values(
             by=['order_id', 'offer_priority', 'distance_km', 'total_releases_last_2_weeks', 'score'],
@@ -219,7 +217,7 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
             inplace=True
         )
         
-        best_matches_df = nearby_providers_df.groupby('order_id').head(MAX_OFFERS_PER_ORDER).reset_index()
+        best_matches_df = nearby_providers_df.groupby('order_id').head(max_offers).reset_index()
 
         if print_dfs:
             print("\n" + "="*20 + " DEBUG: best_matches_df (Final com Prioridade) " + "="*20); print(best_matches_df.head())
@@ -228,7 +226,7 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
             if limit > 0:
                 best_matches_df = best_matches_df.head(limit)
             
-            print(f"\nEncontrados {len(best_matches_df)} melhores provedores. A iniciar o fluxo de ofertas...")
+            print(f"\nEncontrados {len(best_matches_df)} melhores provedores para {city_name}. A iniciar o fluxo de ofertas...")
             for index, match in best_matches_df.iterrows():
                 match_data = match.to_dict()
                 try:
@@ -246,7 +244,6 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
                     recipient_phone_number = test_number if test_number else match_data.get('mobile')
                     
                     if recipient_phone_number:
-                        # --- INÍCIO DA LÓGICA DE LOG ATUALIZADA ---
                         dialog_response = run_offer_workflow(recipient_phone_number, match_data, template_params)
                         print("-" * 50)
 
@@ -257,9 +254,7 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
                             "offer_priority": match_data.get('offer_priority')
                         }
 
-                        # Verifica a resposta da API antes de decidir qual evento logar
                         if dialog_response and dialog_response.get('result') == 'success':
-                            # Loga como SUCESSO apenas se a API do Chatguru confirmar o envio
                             log_sai_event(
                                 order_id=match_data['order_id'],
                                 provider_id=match_data['provider_id'],
@@ -267,7 +262,6 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
                                 metadata=log_metadata
                             )
                         else:
-                            # Loga como FALHA se a API retornar erro, incluindo a resposta do erro nos metadados
                             log_metadata['api_error_response'] = dialog_response
                             log_sai_event(
                                 order_id=match_data['order_id'],
@@ -275,15 +269,35 @@ def execute_sai_logic(limit=0, test_number=None, print_dfs=False):
                                 event_type='OFFER_DELIVERY_FAILURE',
                                 metadata=log_metadata
                             )
-                        # --- FIM DA LÓGICA DE LOG ATUALIZADA ---
                 except Exception as e:
                     print(f"ERRO ao processar o match para a ordem {match_data.get('order_id')}: {e}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Sistema de Assignação Inteligente (SAI)")
+    parser = argparse.ArgumentParser(description="Sistema de Assignação Inteligente (SAI) - Teste Local")
+    parser.add_argument("--city-id", type=int, required=True, help="ID da cidade para executar o teste.")
     parser.add_argument("--numero-teste", type=str, help="Envia a oferta para um número de teste específico.")
-    parser.add_argument("--limite", type=int, default=0, help="Limita o número de ofertas a serem enviadas (0 para sem limite).")
-    parser.add_argument("--print-dfs", action="store_true", help="Imprime o cabeçalho dos DataFrames intermediários no console.")
+    parser.add_argument("--limite", type=int, default=0, help="Limita o número TOTAL de ofertas a serem enviadas neste teste.")
+    parser.add_argument("--print-dfs", action="store_true", help="Imprime os DataFrames de depuração no console.")
     args = parser.parse_args()
     
-    execute_sai_logic(limit=args.limite, test_number=args.numero_teste, print_dfs=args.print_dfs)
+    print("--- MODO DE TESTE LOCAL ATIVADO ---")
+    
+    # Busca a configuração da cidade especificada no banco de dados
+    all_configs_df = read_log_data(query_sai_city_configs())
+    
+    if all_configs_df is None or all_configs_df.empty:
+        print(f"ERRO: Nenhuma configuração de cidade encontrada no banco de dados.")
+    else:
+        city_config_df = all_configs_df[all_configs_df['city_id'] == args.city_id]
+        
+        if city_config_df.empty:
+            print(f"ERRO: Nenhuma configuração encontrada para a cidade com ID {args.city_id}.")
+        else:
+            # Converte a linha do DataFrame para um dicionário e chama a função de processamento
+            city_config = city_config_df.iloc[0].to_dict()
+            process_city_offers(
+                city_config=city_config,
+                test_number=args.numero_teste,
+                print_dfs=args.print_dfs,
+                limit=args.limite
+            )

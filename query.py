@@ -1,10 +1,8 @@
-def query_stuck_orders(city_ids: list):
+def query_stuck_orders(city_id: int, time_interval: int):
     """
     Retorna uma query SQL que encontra as corridas travadas para uma
-    lista específica de cidades.
+    cidade específica, usando um intervalo de tempo dinâmico.
     """
-    city_ids_str = f"({', '.join(map(str, city_ids))})"
-
     return f"""
         WITH
         base_latitude as (
@@ -66,10 +64,10 @@ def query_stuck_orders(city_ids: list):
                 CASE
                     WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
                     ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
-                END >= 3
+                END >= {time_interval}
                 AND ur.status = 'SEARCHING'
                 AND ur.provider_id IN (0, 1266)
-                AND ur.city_id IN {city_ids_str}
+                AND ur.city_id = {city_id}
                 AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)
                 AND (ur.integration_service NOT LIKE '%mercado livre%' OR ur.integration_service IS NULL)
                 AND DATE(
@@ -260,7 +258,7 @@ def query_order_details_by_ids(order_ids: list):
             ur.status AS final_status,
             c.name AS city_name,
             ur.original_created_at AS created_at,
-            ur.finished_at AS completed_at -- CORRIGIDO: Usando 'finished_at' que é a coluna correta
+            ur.finished_at AS completed_at
         FROM
             giross_producao.user_requests ur
         LEFT JOIN
@@ -282,4 +280,24 @@ def query_sent_offers_log():
             desenvolvimento_bi.sai_event_log
         WHERE
             event_type = 'OFFER_SENT';
+    """
+
+def query_sai_city_configs():
+    """
+    Retorna uma query que busca todas as configurações ativas para as cidades
+    na tabela de configuração do SAI.
+    """
+    return """
+        SELECT
+            city_id,
+            city_name,
+            time_interval_minutes,
+            max_offers_per_order,
+            offer_distance_km,
+            is_active,
+            last_run_timestamp
+        FROM
+            desenvolvimento_bi.sai_city_configs
+        WHERE
+            is_active = TRUE;
     """

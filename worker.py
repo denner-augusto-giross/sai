@@ -2,68 +2,58 @@
 
 import time
 from datetime import datetime, timedelta
-from croniter import croniter
-from main import execute_sai_logic
-from analytics_etl import run_analytics_etl
-from create_sent_offers_analytics import run_sent_offers_etl # <-- Nova importação
-
-# Expressão de cron para agendar a tarefa principal a cada 5 minutos.
-CRON_EXPRESSION = "*/5 * * * *" 
-
-# Variável para controlar a última vez que os ETLs de análise foram executados
-last_etl_run_time = None
+from main import process_city_offers
+from log_db import read_log_data, update_city_last_run
+from query import query_sai_city_configs
 
 def main():
     """
-    Loop para executar o cronjob indefinidamente, com gatilhos diários para os ETLs.
+    Loop principal do worker. A cada minuto, verifica quais cidades
+    precisam ser processadas com base em suas configurações.
     """
-    global last_etl_run_time
-    
-    print(f"INFO: Worker iniciado. A aguardar o próximo agendamento baseado em '{CRON_EXPRESSION}'...")
-    base_time = datetime.now()
+    print(f"--- WORKER DO SAI INICIADO ÀS {datetime.now()} ---")
     
     while True:
-        scheduler = croniter(CRON_EXPRESSION, base_time)
-        next_schedule = scheduler.get_next(datetime)
+        print(f"\n--- {datetime.now()}: Verificando cidades para processar... ---")
         
-        wait_time = (next_schedule - datetime.now()).total_seconds()
-        if wait_time > 0:
-            print(f"Próxima execução da oferta em: {next_schedule.strftime('%Y-%m-%d %H:%M:%S')}. A aguardar por {int(wait_time)} segundos...")
-            time.sleep(wait_time)
-
-        # --- LÓGICA PRINCIPAL DE OFERTAS (executa a cada 5 minutos) ---
-        print(f"\n--- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - EXECUTANDO TAREFA DE OFERTAS ---")
         try:
-            execute_sai_logic()
+            # 1. Busca as configurações de todas as cidades ativas
+            city_configs_df = read_log_data(query_sai_city_configs())
+
+            if city_configs_df is None or city_configs_df.empty:
+                print("AVISO: Nenhuma configuração de cidade ativa encontrada. Tentando novamente em 1 minuto.")
+                time.sleep(60)
+                continue
+
+            now = datetime.now()
+
+            # 2. Itera sobre cada cidade e verifica se é hora de rodar
+            for index, city_config in city_configs_df.iterrows():
+                city_id = city_config['city_id']
+                city_name = city_config['city_name']
+                interval = timedelta(minutes=city_config['time_interval_minutes'])
+                last_run = city_config['last_run_timestamp']
+
+                # Verifica se já passou tempo suficiente desde a última execução
+                if last_run is None or (now - last_run) >= interval:
+                    print(f"\n>>> EXECUTANDO SAI PARA: {city_name} (ID: {city_id}) <<<")
+                    
+                    # 3. Chama a lógica principal para a cidade específica
+                    process_city_offers(city_config=city_config.to_dict())
+                    
+                    # 4. Atualiza o timestamp da última execução no sucesso
+                    update_city_last_run(city_id)
+                    
+                    print(f">>> FINALIZADO SAI PARA: {city_name} <<<")
+                else:
+                    print(f"INFO: Aguardando para {city_name}. Próxima execução após {(last_run + interval).strftime('%H:%M:%S')}.")
+
         except Exception as e:
-            print(f"ERRO: Ocorreu um erro ao executar a tarefa de ofertas: {e}")
-        print("--- TAREFA DE OFERTAS CONCLUÍDA. ---")
-        
-        # --- LÓGICA DO GATILHO DE ETL (executa uma vez por dia) ---
-        now = datetime.now()
-        if last_etl_run_time is None or (now - last_etl_run_time) > timedelta(hours=24):
-            print(f"\n--- {now.strftime('%Y-%m-%d %H:%M:%S')} - INICIANDO TAREFAS DE ETL DIÁRIAS ---")
-            
-            # Executa o ETL de Performance (Ofertas Aceitas vs. Completadas)
-            try:
-                print("\n-> Executando ETL de Performance...")
-                run_analytics_etl()
-                print("-> ETL de Performance concluído.")
-            except Exception as e:
-                print(f"ERRO no ETL de Performance: {e}")
+            print(f"ERRO CRÍTICO NO LOOP DO WORKER: {e}")
 
-            # Executa o novo ETL de Ofertas Enviadas
-            try:
-                print("\n-> Executando ETL de Ofertas Enviadas...")
-                run_sent_offers_etl()
-                print("-> ETL de Ofertas Enviadas concluído.")
-            except Exception as e:
-                print(f"ERRO no ETL de Ofertas Enviadas: {e}")
-
-            last_etl_run_time = now # Atualiza o timestamp após a tentativa de ambos
-            print("--- TAREFAS DE ETL DIÁRIAS CONCLUÍDAS. ---")
-        
-        base_time = datetime.now()
+        # Aguarda 60 segundos antes da próxima verificação
+        print("\n--- Ciclo do worker concluído. Aguardando 60 segundos... ---")
+        time.sleep(60)
 
 if __name__ == "__main__":
     main()
