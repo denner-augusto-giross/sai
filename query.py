@@ -1,7 +1,7 @@
-def query_stuck_orders(city_id: int, time_interval: int):
+def query_stuck_orders(city_id: int, stuck_threshold: int):
     """
     Retorna uma query SQL que encontra as corridas travadas para uma
-    cidade específica, usando um intervalo de tempo dinâmico.
+    cidade específica, usando um limite de tempo dinâmico.
     """
     return f"""
         WITH
@@ -64,10 +64,10 @@ def query_stuck_orders(city_id: int, time_interval: int):
                 CASE
                     WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
                     ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
-                END >= {time_interval}
+                END >= {stuck_threshold} -- <-- ALTERAÇÃO AQUI
                 AND ur.status = 'SEARCHING'
                 AND ur.provider_id IN (0, 1266)
-                AND ur.city_id = {city_id}
+                AND ur.city_id = {city_id} -- <-- ALTERAÇÃO AQUI
                 AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)
                 AND (ur.integration_service NOT LIKE '%mercado livre%' OR ur.integration_service IS NULL)
                 AND DATE(
@@ -292,6 +292,7 @@ def query_sai_city_configs():
             city_id,
             city_name,
             time_interval_minutes,
+            stuck_order_threshold_minutes, -- <-- NOVA COLUNA
             max_offers_per_order,
             offer_distance_km,
             is_active,

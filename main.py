@@ -110,14 +110,14 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
     """
     city_id = city_config['city_id']
     city_name = city_config['city_name']
-    time_interval = city_config['time_interval_minutes']
+    stuck_threshold = city_config['stuck_order_threshold_minutes']
     max_offers = city_config['max_offers_per_order']
     offer_distance = city_config['offer_distance_km']
 
     print(f"\n--- PROCESSANDO CIDADE: {city_name} (ID: {city_id}) ---")
-    print(f"Configurações: Intervalo={time_interval}min, MaxOfertas={max_offers}, Distância={offer_distance}km")
+    print(f"Configurações: Limite Travada={stuck_threshold}min, MaxOfertas={max_offers}, Distância={offer_distance}km")
     
-    stuck_orders_df = read_data_from_db(query_stuck_orders(city_id, time_interval))
+    stuck_orders_df = read_data_from_db(query_stuck_orders(city_id, stuck_threshold))
     
     if stuck_orders_df is None or stuck_orders_df.empty:
         print(f"INFO: Nenhuma corrida travada encontrada para {city_name}.")
@@ -282,7 +282,6 @@ if __name__ == "__main__":
     
     print("--- MODO DE TESTE LOCAL ATIVADO ---")
     
-    # Busca a configuração da cidade especificada no banco de dados
     all_configs_df = read_log_data(query_sai_city_configs())
     
     if all_configs_df is None or all_configs_df.empty:
@@ -293,7 +292,6 @@ if __name__ == "__main__":
         if city_config_df.empty:
             print(f"ERRO: Nenhuma configuração encontrada para a cidade com ID {args.city_id}.")
         else:
-            # Converte a linha do DataFrame para um dicionário e chama a função de processamento
             city_config = city_config_df.iloc[0].to_dict()
             process_city_offers(
                 city_config=city_config,
