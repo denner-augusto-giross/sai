@@ -9,7 +9,8 @@ from db import read_data_from_db
 from query import (
     query_stuck_orders, query_available_providers, query_blocked_pairs, 
     query_offers_sent, query_offline_providers_with_history, 
-    query_responsive_providers, query_fixed_providers, query_sai_city_configs
+    query_responsive_providers, query_fixed_providers, query_sai_city_configs,
+    query_providers_on_unanswered_cooldown # <-- Importação adicionada
 )
 from geopy.distance import geodesic
 import pandas as pd
@@ -17,9 +18,14 @@ from log_db import log_sai_event, read_log_data
 
 pd.set_option('display.max_columns', None)
 
-# --- CONFIGURAÇÕES GLOBAIS QUE NÃO VARIAM POR CIDADE ---
+# --- CONFIGURAÇÕES GLOBAIS ---
+CITIES_TO_PROCESS = [49, 69, 70, 97, 145, 150, 151, 154, 156, 157, 162, 163, 164, 171, 193, 247, 252, 265, 268, 277, 387, 445, 457, 485, 623]
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
 AVG_SPEED_KMH = 25
+MAX_OFFERS_PER_ORDER = 2
+OFFER_DISTANCE_KM = 5
+
+# --- VARIÁVEL DE CONTROLE PARA OTIMIZAÇÃO DE CUSTO ---
 FILTER_ONLY_ACTIVE_PROVIDERS = True
 # ---------------------------------------------------------
 
@@ -37,7 +43,7 @@ def run_offer_workflow(chat_number, match_data, template_params):
 
     if not all([chat_key, chat_account_id, chat_phone_id, chat_url]):
         print("ERRO: Credenciais do Chatguru não encontradas no .env")
-        return None
+        return None # Retorna None em caso de erro
 
     api = ChatguruWABA(chat_key, chat_account_id, chat_phone_id, chat_url)
     
@@ -81,13 +87,13 @@ def run_offer_workflow(chat_number, match_data, template_params):
     custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
     api.update_custom_fields(final_chat_number, custom_fields)
 
-    dialog_response = None
+    dialog_response = None # Inicializa a variável
     if DIALOG_ID_PARA_OFERTA:
         print(f"Etapa 3: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
         dialog_response = api.execute_dialog(final_chat_number, DIALOG_ID_PARA_OFERTA, template_params)
         print(f"Resposta da Execução do Diálogo para {final_chat_number}:", dialog_response)
     
-    return dialog_response
+    return dialog_response # Retorna a resposta da API
 
 def clean_and_format_phone(phone_number):
     """
@@ -113,6 +119,8 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
     stuck_threshold = city_config['stuck_order_threshold_minutes']
     max_offers = city_config['max_offers_per_order']
     offer_distance = city_config['offer_distance_km']
+    max_unanswered = city_config['max_unanswered_offers']
+    cooldown_hours = city_config['unanswered_cooldown_hours']
 
     print(f"\n--- PROCESSANDO CIDADE: {city_name} (ID: {city_id}) ---")
     print(f"Configurações: Limite Travada={stuck_threshold}min, MaxOfertas={max_offers}, Distância={offer_distance}km")
@@ -140,9 +148,19 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
         fixed_provider_ids = fixed_providers_df['provider_id'].tolist()
         initial_count = len(providers_df)
         providers_df = providers_df[~providers_df['provider_id'].isin(fixed_provider_ids)]
-        print(f"INFO: {len(fixed_provider_ids)} provedores fixos encontrados e removidos. {initial_count} -> {len(providers_df)} provedores restantes.")
+        print(f"INFO: {len(fixed_provider_ids)} provedores fixos removidos. {initial_count} -> {len(providers_df)} provedores restantes.")
     else:
         print("INFO: Nenhum provedor fixo ativo encontrado.")
+
+    print(f"\nINFO: Verificando provedores em cooldown (mais de {max_unanswered} ofertas ignoradas em {cooldown_hours}h)...")
+    cooldown_providers_df = read_log_data(query_providers_on_unanswered_cooldown(max_unanswered, cooldown_hours))
+    if cooldown_providers_df is not None and not cooldown_providers_df.empty:
+        cooldown_provider_ids = cooldown_providers_df['provider_id'].tolist()
+        initial_count = len(providers_df)
+        providers_df = providers_df[~providers_df['provider_id'].isin(cooldown_provider_ids)]
+        print(f"INFO: {len(cooldown_provider_ids)} provedores em cooldown removidos. {initial_count} -> {len(providers_df)} provedores restantes.")
+    else:
+        print("INFO: Nenhum provedor em cooldown por ignorar ofertas encontrado.")
 
     if FILTER_ONLY_ACTIVE_PROVIDERS:
         print("\nINFO: Filtro de provedores ativos está LIGADO.")

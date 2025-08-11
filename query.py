@@ -64,10 +64,10 @@ def query_stuck_orders(city_id: int, stuck_threshold: int):
                 CASE
                     WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
                     ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
-                END >= {stuck_threshold} -- <-- ALTERAÇÃO AQUI
+                END >= {stuck_threshold}
                 AND ur.status = 'SEARCHING'
                 AND ur.provider_id IN (0, 1266)
-                AND ur.city_id = {city_id} -- <-- ALTERAÇÃO AQUI
+                AND ur.city_id = {city_id}
                 AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)
                 AND (ur.integration_service NOT LIKE '%mercado livre%' OR ur.integration_service IS NULL)
                 AND DATE(
@@ -292,9 +292,11 @@ def query_sai_city_configs():
             city_id,
             city_name,
             time_interval_minutes,
-            stuck_order_threshold_minutes, -- <-- NOVA COLUNA
+            stuck_order_threshold_minutes,
             max_offers_per_order,
             offer_distance_km,
+            max_unanswered_offers,
+            unanswered_cooldown_hours,
             is_active,
             last_run_timestamp
         FROM
@@ -302,3 +304,86 @@ def query_sai_city_configs():
         WHERE
             is_active = TRUE;
     """
+
+def query_providers_on_unanswered_cooldown(max_unanswered: int, cooldown_hours: int):
+    """
+    Retorna uma query que busca provedores que ignoraram mais ofertas
+    consecutivas do que o permitido (`max_unanswered`).
+    """
+    return f"""
+        WITH last_response AS (
+            SELECT
+                provider_id,
+                MAX(event_timestamp) AS last_response_time
+            FROM
+                desenvolvimento_bi.sai_event_log
+            WHERE
+                event_type IN ('PROVIDER_ACCEPTED', 'PROVIDER_REJECTED')
+            GROUP BY
+                provider_id
+        ),
+        unanswered_offers AS (
+            SELECT
+                log.provider_id,
+                COUNT(log.log_id) AS unanswered_count,
+                MAX(log.event_timestamp) as last_offer_sent_time
+            FROM
+                desenvolvimento_bi.sai_event_log log
+            LEFT JOIN
+                last_response lr ON log.provider_id = lr.provider_id
+            WHERE
+                log.event_type = 'OFFER_SENT'
+                AND (log.event_timestamp > lr.last_response_time OR lr.last_response_time IS NULL)
+            GROUP BY
+                log.provider_id
+        )
+        SELECT
+            provider_id
+        FROM
+            unanswered_offers
+        WHERE
+            unanswered_count >= {max_unanswered}
+            AND last_offer_sent_time >= NOW() - INTERVAL {cooldown_hours} HOUR;
+    """
+
+def query_unanswered_offers_to_log():
+    """
+    Retorna uma query que identifica pares (order_id, provider_id) de ofertas
+    enviadas que não foram respondidas e para as quais ainda não foi gerado
+    um log de 'UNANSWERED_OFFER'.
+    """
+    return """
+        WITH sent_pairs AS (
+            -- Seleciona todos os pares únicos (ordem, provedor) que receberam uma oferta
+            SELECT DISTINCT order_id, provider_id
+            FROM desenvolvimento_bi.sai_event_log
+            WHERE event_type = 'OFFER_SENT'
+        ),
+        responded_pairs AS (
+            -- Seleciona todos os pares únicos que tiveram uma resposta
+            SELECT DISTINCT order_id, provider_id
+            FROM desenvolvimento_bi.sai_event_log
+            WHERE event_type IN ('PROVIDER_ACCEPTED', 'PROVIDER_REJECTED')
+        ),
+        already_logged_unanswered AS (
+            -- Seleciona todos os pares que já foram logados como não respondidos
+            SELECT DISTINCT order_id, provider_id
+            FROM desenvolvimento_bi.sai_event_log
+            WHERE event_type = 'UNANSWERED_OFFER'
+        )
+        -- Seleciona os pares enviados que não estão na lista de respondidos
+        -- e que ainda não foram logados como não respondidos.
+        SELECT
+            s.order_id,
+            s.provider_id
+        FROM
+            sent_pairs s
+        LEFT JOIN
+            responded_pairs r ON s.order_id = r.order_id AND s.provider_id = r.provider_id
+        LEFT JOIN
+            already_logged_unanswered alu ON s.order_id = alu.order_id AND s.provider_id = alu.provider_id
+        WHERE
+            r.provider_id IS NULL -- Filtra apenas as que não tiveram resposta
+            AND alu.provider_id IS NULL; -- Filtra as que ainda não foram logadas
+    """
+
