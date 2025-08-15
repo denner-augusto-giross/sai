@@ -1,8 +1,20 @@
+from datetime import datetime
+
 def query_stuck_orders(city_id: int, stuck_threshold: int):
     """
     Retorna uma query SQL que encontra as corridas travadas para uma
     cidade específica, usando um limite de tempo dinâmico.
+    Nos domingos, inclui as corridas 'D+1'. Nos outros dias, as exclui.
     """
+    # Lógica para o filtro D+1
+    # datetime.weekday() retorna 6 para Domingo
+    is_sunday = datetime.now().weekday() == 6
+    
+    d1_filter_clause = ""
+    if not is_sunday:
+        # Se não for domingo, adiciona a cláusula para EXCLUIR as corridas D+1
+        d1_filter_clause = "AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)"
+
     return f"""
         WITH
         base_latitude as (
@@ -68,7 +80,7 @@ def query_stuck_orders(city_id: int, stuck_threshold: int):
                 AND ur.status = 'SEARCHING'
                 AND ur.provider_id IN (0, 1266)
                 AND ur.city_id = {city_id}
-                AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)
+                {d1_filter_clause}
                 AND (ur.integration_service NOT LIKE '%mercado livre%' OR ur.integration_service IS NULL)
                 AND DATE(
                     COALESCE(ur.original_created_at, ur.started_at)
