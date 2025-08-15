@@ -26,7 +26,7 @@ MAX_OFFERS_PER_ORDER = 2
 OFFER_DISTANCE_KM = 5
 
 # --- VARIÁVEL DE CONTROLE PARA OTIMIZAÇÃO DE CUSTO ---
-FILTER_ONLY_ACTIVE_PROVIDERS = True
+FILTER_ONLY_ACTIVE_PROVIDERS = False
 # ---------------------------------------------------------
 
 
