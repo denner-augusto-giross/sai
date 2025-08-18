@@ -16,7 +16,7 @@ class ChatguruWABA:
         }
 
     def _send_request(self, params):
-        """Função auxiliar para enviar requisições POST."""
+        """Envia uma requisição POST para a API do Chatguru."""
         try:
             response = requests.post(self.base_url, data=params, timeout=20)
             response.raise_for_status()
@@ -31,24 +31,11 @@ class ChatguruWABA:
         params = self.base_params.copy()
         params.update({
             "action": "chat_add", "chat_number": chat_number,
-            "name": user_name, "text": "Alerta de corrida Giross próxima de você!"
-        })
-        return self._send_request(params)
-
-    # --- NOVA FUNÇÃO AQUI ---
-    def check_chat_status(self, chat_add_id):
-        """
-        Verifica o status da criação de um chat.
-        """
-        params = self.base_params.copy()
-        params.update({
-            "action": "chat_add_status",
-            "chat_add_id": chat_add_id
+            "name": user_name, "text": ""
         })
         return self._send_request(params)
 
     def update_custom_fields(self, chat_number, fields_to_update: dict):
-        """Atualizar campos personalizados para um chat."""
         params = self.base_params.copy()
         params.update({
             "action": "chat_update_custom_fields",
@@ -58,15 +45,32 @@ class ChatguruWABA:
             params[f"field__{key}"] = value
         return self._send_request(params)
 
+    def check_chat_status(self, chat_add_id):
+        """
+        Verifica o status de um registro de chat pendente.
+        """
+        params = self.base_params.copy()
+        params.update({
+            "action": "chat_add_status",
+            "chat_add_id": chat_add_id
+        })
+        return self._send_request(params)
+
     def execute_dialog(self, chat_number, dialog_id, template_params: list):
         """
-        Executa um diálogo e envia os parâmetros para o template.
+        Executa um diálogo e envia os parâmetros para o template de forma individual.
         """
         params = self.base_params.copy()
         params.update({
             "action": "dialog_execute",
             "dialog_id": dialog_id,
             "chat_number": chat_number,
-            "params": json.dumps(template_params)
         })
+        
+        # --- INÍCIO DA CORREÇÃO ---
+        # Adiciona cada item da lista como um parâmetro separado (param1, param2, etc.)
+        for i, param_value in enumerate(template_params):
+            params[f"param{i+1}"] = param_value
+        # --- FIM DA CORREÇÃO ---
+            
         return self._send_request(params)
