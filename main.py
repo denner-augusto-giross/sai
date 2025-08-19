@@ -10,7 +10,7 @@ from query import (
     query_stuck_orders, query_available_providers, query_blocked_pairs, 
     query_offers_sent, query_offline_providers_with_history, 
     query_responsive_providers, query_fixed_providers, query_sai_city_configs,
-    query_providers_on_unanswered_cooldown, query_offline_providers_by_city, # <-- Novas importações
+    query_providers_on_unanswered_cooldown, query_offline_providers_by_city,
     query_providers_on_active_orders
 )
 from geopy.distance import geodesic
@@ -117,7 +117,7 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
     offer_distance = city_config['offer_distance_km']
     max_unanswered = city_config['max_unanswered_offers']
     cooldown_hours = city_config['unanswered_cooldown_hours']
-    offer_all_offline = city_config.get('offer_to_all_city_offline', False) # Usar .get() para retrocompatibilidade
+    offer_all_offline = city_config.get('offer_to_all_city_offline', False)
 
     print(f"\n--- PROCESSANDO CIDADE: {city_name} (ID: {city_id}) ---")
     print(f"Configurações: Limite Travada={stuck_threshold}min, MaxOfertas={max_offers}, Distância={offer_distance}km")
@@ -130,7 +130,6 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
 
     online_providers_df = read_data_from_db(query_available_providers())
     
-    # --- LÓGICA CONDICIONAL PARA BUSCAR PROVEDORES OFFLINE ---
     if offer_all_offline:
         print(f"INFO: {city_name} é uma cidade pequena. Buscando TODOS os entregadores offline da cidade.")
         offline_providers_df = read_data_from_db(query_offline_providers_by_city(city_id))
@@ -138,7 +137,6 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
         print(f"INFO: {city_name} é uma cidade grande. Buscando apenas entregadores offline com histórico na loja.")
         store_ids = stuck_orders_df['user_id'].unique().tolist()
         offline_providers_df = read_data_from_db(query_offline_providers_with_history(store_ids))
-    # --- FIM DA LÓGICA CONDICIONAL ---
 
     if online_providers_df is not None:
         online_providers_df['offer_priority'] = 1
@@ -271,16 +269,28 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
                     continue
 
                 try:
-                    param1 = match_data.get('param1_valor', '💰 Valor da Corrida: N/D')
-                    param2 = match_data.get('param2_endereco', '📍 Endereço de Coleta: N/D')
+                    # --- INÍCIO DA CORREÇÃO: GERAR DICIONÁRIO DE PARÂMETROS NOMEADOS ---
+                    
+                    param1_raw = match_data.get('param1_valor', 'R$ N/D')
+                    param2_raw = match_data.get('param2_endereco', 'Endereço: N/D')
+                    
+                    valor_corrida = param1_raw.split('R$ ')[-1] if 'R$ ' in param1_raw else 'N/D'
+                    endereco_coleta = param2_raw.split('Coleta: ')[-1] if 'Coleta: ' in param2_raw else 'N/D'
+
                     dist_to_store = match_data.get('distance_km', 0)
                     eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
-                    param3 = f"Sua Situação:\n- Distância até a coleta: ~{dist_to_store:.1f} km\n- Tempo estimado até a coleta: ~{eta_to_store} min"
-                    store_to_delivery_dist = match_data.get('store_to_delivery_distance', 0)
-                    total_dist = dist_to_store + store_to_delivery_dist
-                    total_eta = int((total_dist / AVG_SPEED_KMH) * 60)
-                    param4 = f"Detalhes da Entrega:\n- Percurso total da corrida: ~{total_dist:.1f} km\n- Tempo estimado total (coleta + entrega): ~{total_eta} min"
-                    template_params = [param1, param2, param3, param4]
+                    
+                    distancia_ate_loja = f"~{dist_to_store:.1f} km"
+                    tempo_ate_loja = f"~{eta_to_store} min"
+
+                    template_params = {
+                        "valor_corrida": valor_corrida,
+                        "endereco_coleta": endereco_coleta,
+                        "distancia_ate_loja": distancia_ate_loja,
+                        "tempo_ate_loja": tempo_ate_loja
+                    }
+                    
+                    # --- FIM DA CORREÇÃO ---
                     
                     recipient_phone_number = test_number if test_number else match_data.get('mobile')
                     
@@ -291,7 +301,7 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
                         sent_providers_this_run.add(provider_id)
 
                         log_metadata = {
-                            "distance_to_store_km": match_data.get('distance_km'),
+                            "distance_to_store_km": dist_to_store,
                             "provider_score": match_data.get('score'),
                             "provider_releases": match_data.get('total_releases_last_2_weeks'),
                             "offer_priority": match_data.get('offer_priority')

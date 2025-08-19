@@ -4,9 +4,6 @@ import requests
 import json
 
 class ChatguruWABA:
-    """
-    Classe para interagir com a API do Chatguru, seguindo o fluxo WABA.
-    """
     def __init__(self, key, account_id, phone_id, url):
         self.base_url = url
         self.base_params = {
@@ -16,7 +13,6 @@ class ChatguruWABA:
         }
 
     def _send_request(self, params):
-        """Envia uma requisição POST para a API do Chatguru."""
         try:
             response = requests.post(self.base_url, data=params, timeout=20)
             response.raise_for_status()
@@ -27,11 +23,10 @@ class ChatguruWABA:
             return {"error": f"Erro de Requisição: {e}"}
 
     def register_chat(self, chat_number, user_name="Novo Lead"):
-        """Etapa 1: Cadastrar um novo chat."""
         params = self.base_params.copy()
         params.update({
             "action": "chat_add", "chat_number": chat_number,
-            "name": user_name, "text": "Alerta de corrida Giross próxima de você!"
+            "name": user_name, "text": ""
         })
         return self._send_request(params)
 
@@ -56,9 +51,9 @@ class ChatguruWABA:
         })
         return self._send_request(params)
 
-    def execute_dialog(self, chat_number, dialog_id, template_params: list):
+    def execute_dialog(self, chat_number, dialog_id, template_params: dict):
         """
-        Executa um diálogo e envia os parâmetros para o template de forma individual.
+        Executa um diálogo e envia os parâmetros nomeados para o template.
         """
         params = self.base_params.copy()
         params.update({
@@ -68,9 +63,11 @@ class ChatguruWABA:
         })
         
         # --- INÍCIO DA CORREÇÃO ---
-        # Adiciona cada item da lista como um parâmetro separado (param1, param2, etc.)
-        for i, param_value in enumerate(template_params):
-            params[f"param{i+1}"] = param_value
+        # Adiciona cada item do dicionário como um parâmetro separado
+        # Ex: {"valor_corrida": "10,00"} vira um parâmetro "valor_corrida=10,00"
+        if isinstance(template_params, dict):
+            for key, value in template_params.items():
+                params[key] = value
         # --- FIM DA CORREÇÃO ---
             
         return self._send_request(params)
