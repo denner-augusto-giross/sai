@@ -5,17 +5,23 @@ from datetime import datetime, timedelta
 import pandas as pd
 from main import process_city_offers
 from log_db import read_log_data, update_city_last_run
-from query import query_sai_city_configs
+from query import query_sai_city_configs, query_offers_sent_today
 from analytics_etl import run_analytics_etl
 from create_sent_offers_analytics import run_sent_offers_etl
 from log_unanswered_etl import run_log_unanswered_etl
 
+# --- CONFIGURAÇÕES DE CONTROLE DE CUSTO ---
+DAILY_SPEND_LIMIT_BRL = 40.00
+COST_PER_OFFER_BRL = 0.040
+# -----------------------------------------
+
 def main():
     """
-    Loop principal do worker. A cada minuto, verifica quais cidades
-    precisam ser processadas e executa tarefas de ETL diárias.
+    Loop principal do worker. A cada minuto, verifica o limite de gastos,
+    processa cidades e executa tarefas de ETL diárias.
     """
     print(f"--- WORKER DO SAI INICIADO ÀS {datetime.now()} ---")
+    print(f"INFO: Limite de gasto diário configurado para R$ {DAILY_SPEND_LIMIT_BRL:.2f}")
     
     last_etl_run_time = None
     
@@ -23,6 +29,23 @@ def main():
         print(f"\n--- {datetime.now()}: Verificando ciclo de tarefas... ---")
         
         try:
+            # --- VERIFICAÇÃO DE LIMITE DE GASTOS ---
+            offers_count_df = read_log_data(query_offers_sent_today())
+            offers_sent_today = 0
+            if offers_count_df is not None and not offers_count_df.empty:
+                offers_sent_today = offers_count_df.iloc[0]['offers_sent_today']
+            
+            current_spend = offers_sent_today * COST_PER_OFFER_BRL
+            
+            print(f"INFO: {offers_sent_today} ofertas enviadas hoje. Gasto estimado: R$ {current_spend:.2f}")
+
+            if current_spend >= DAILY_SPEND_LIMIT_BRL:
+                print(f"AVISO: Limite de R$ {DAILY_SPEND_LIMIT_BRL:.2f} atingido. O envio de novas ofertas está pausado.")
+                print("--- Worker em modo de espera por 1 hora. ---")
+                time.sleep(3600) # Pausa por 1 hora
+                continue # Pula para a próxima iteração do loop
+            # --- FIM DA VERIFICAÇÃO ---
+
             # --- LÓGICA DE OFERTAS POR CIDADE (a cada minuto) ---
             city_configs_df = read_log_data(query_sai_city_configs())
 

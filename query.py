@@ -449,3 +449,15 @@ def query_providers_on_active_orders():
             AND provider_id IS NOT NULL
             AND provider_id > 0;
     """
+def query_offers_sent_today():
+    """
+    Retorna uma query que conta o número total de eventos 'OFFER_SENT'
+    registrados no dia de hoje (a partir da meia-noite).
+    """
+    return """
+        SELECT COUNT(*) as offers_sent_today
+        FROM desenvolvimento_bi.sai_event_log
+        WHERE
+            event_type = 'OFFER_SENT'
+            AND event_timestamp >= CURDATE();
+    """
