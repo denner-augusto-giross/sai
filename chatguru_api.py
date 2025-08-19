@@ -4,6 +4,9 @@ import requests
 import json
 
 class ChatguruWABA:
+    """
+    Classe para interagir com a API do Chatguru, seguindo o fluxo WABA.
+    """
     def __init__(self, key, account_id, phone_id, url):
         self.base_url = url
         self.base_params = {
@@ -13,6 +16,7 @@ class ChatguruWABA:
         }
 
     def _send_request(self, params):
+        """Envia uma requisição POST para a API do Chatguru."""
         try:
             response = requests.post(self.base_url, data=params, timeout=20)
             response.raise_for_status()
@@ -23,10 +27,11 @@ class ChatguruWABA:
             return {"error": f"Erro de Requisição: {e}"}
 
     def register_chat(self, chat_number, user_name="Novo Lead"):
+        """Etapa 1: Cadastrar um novo chat."""
         params = self.base_params.copy()
         params.update({
             "action": "chat_add", "chat_number": chat_number,
-            "name": user_name, "text": ""
+            "name": user_name, "text": "Alerta de corrida Giross próxima de você!"
         })
         return self._send_request(params)
 
