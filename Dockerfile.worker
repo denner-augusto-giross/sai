@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 6. O comando para iniciar o worker agendado
-CMD ["python", "worker.py"]
+CMD ["python", "worker.py","--print-dfs"]

@@ -269,8 +269,7 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
                     continue
 
                 try:
-                    # --- INÍCIO DA CORREÇÃO: GERAR DICIONÁRIO DE PARÂMETROS NOMEADOS ---
-                    
+                    # --- INÍCIO DA CORREÇÃO: Montar um DICIONÁRIO com nomes de parâmetros ---
                     param1_raw = match_data.get('param1_valor', 'R$ N/D')
                     param2_raw = match_data.get('param2_endereco', 'Endereço: N/D')
                     
@@ -289,7 +288,6 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
                         "distancia_ate_loja": distancia_ate_loja,
                         "tempo_ate_loja": tempo_ate_loja
                     }
-                    
                     # --- FIM DA CORREÇÃO ---
                     
                     recipient_phone_number = test_number if test_number else match_data.get('mobile')
