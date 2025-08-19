@@ -70,9 +70,9 @@ class ChatguruWABA:
         # --- INÍCIO DA CORREÇÃO ---
         # Adiciona cada item do dicionário como um parâmetro separado
         # Ex: {"valor_corrida": "10,00"} vira um parâmetro "valor_corrida=10,00"
-        if isinstance(template_params, dict):
-            for key, value in template_params.items():
-                params[key] = value
+        if isinstance(template_params, list):
+            for i, param_value in enumerate(template_params):
+                params[f"param{i+1}"] = param_value
         # --- FIM DA CORREÇÃO ---
             
         return self._send_request(params)
