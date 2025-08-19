@@ -303,12 +303,15 @@ def query_sai_city_configs():
         SELECT
             city_id,
             city_name,
+            population,
+            area_km2,
             time_interval_minutes,
             stuck_order_threshold_minutes,
             max_offers_per_order,
             offer_distance_km,
             max_unanswered_offers,
             unanswered_cooldown_hours,
+            offer_to_all_city_offline, -- <-- NOVA COLUNA
             is_active,
             last_run_timestamp
         FROM
@@ -398,4 +401,51 @@ def query_unanswered_offers_to_log():
             r.provider_id IS NULL -- Filtra apenas as que não tiveram resposta
             AND alu.provider_id IS NULL; -- Filtra as que ainda não foram logadas
     """
-
+def query_offline_providers_by_city(city_id: int):
+    """
+    Retorna uma query que encontra TODOS os entregadores OFFLINE ou INATIVOS
+    de uma cidade específica.
+    """
+    return f"""
+        WITH provider_releases AS (
+            SELECT
+                provider_id,
+                COUNT(id) AS total_releases
+            FROM
+                giross_producao.provider_cancelled_user_requests
+            WHERE
+                created_at >= NOW() - INTERVAL 14 DAY
+            GROUP BY 1
+        )
+        SELECT
+            p.id AS provider_id,
+            CONCAT(p.first_name, ' ', p.last_name) AS provider_name,
+            p.mobile,
+            ps.status AS online_status,
+            p.latitude,
+            p.longitude,
+            score.score,
+            COALESCE(pr.total_releases, 0) AS total_releases_last_2_weeks
+        FROM
+            giross_producao.providers p
+            INNER JOIN giross_producao.provider_services ps ON p.id = ps.provider_id
+            LEFT JOIN giross_producao.provider_scores score ON p.id = score.provider_id
+            LEFT JOIN provider_releases pr ON p.id = pr.provider_id
+        WHERE
+            p.city_id = {city_id}
+            AND ps.status IN ('inactive', 'offline');
+    """
+def query_providers_on_active_orders():
+    """
+    Retorna uma query que busca os IDs de todos os provedores que estão
+    atualmente atribuídos a uma corrida que NÃO está em um status final
+    (COMPLETED ou CANCELLED).
+    """
+    return """
+        SELECT DISTINCT provider_id
+        FROM giross_producao.user_requests
+        WHERE 
+            status NOT IN ('COMPLETED', 'CANCELLED')
+            AND provider_id IS NOT NULL
+            AND provider_id > 0;
+    """

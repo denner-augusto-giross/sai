@@ -10,7 +10,8 @@ from query import (
     query_stuck_orders, query_available_providers, query_blocked_pairs, 
     query_offers_sent, query_offline_providers_with_history, 
     query_responsive_providers, query_fixed_providers, query_sai_city_configs,
-    query_providers_on_unanswered_cooldown # <-- Importação adicionada
+    query_providers_on_unanswered_cooldown, query_offline_providers_by_city, # <-- Novas importações
+    query_providers_on_active_orders
 )
 from geopy.distance import geodesic
 import pandas as pd
@@ -18,14 +19,9 @@ from log_db import log_sai_event, read_log_data
 
 pd.set_option('display.max_columns', None)
 
-# --- CONFIGURAÇÕES GLOBAIS ---
-CITIES_TO_PROCESS = [49, 69, 70, 97, 145, 150, 151, 154, 156, 157, 162, 163, 164, 171, 193, 247, 252, 265, 268, 277, 387, 445, 457, 485, 623]
+# --- CONFIGURAÇÕES GLOBAIS QUE NÃO VARIAM POR CIDADE ---
 DIALOG_ID_PARA_OFERTA = "68681a2827f824ecd929292a" 
 AVG_SPEED_KMH = 25
-MAX_OFFERS_PER_ORDER = 2
-OFFER_DISTANCE_KM = 5
-
-# --- VARIÁVEL DE CONTROLE PARA OTIMIZAÇÃO DE CUSTO ---
 FILTER_ONLY_ACTIVE_PROVIDERS = False
 # ---------------------------------------------------------
 
@@ -43,7 +39,7 @@ def run_offer_workflow(chat_number, match_data, template_params):
 
     if not all([chat_key, chat_account_id, chat_phone_id, chat_url]):
         print("ERRO: Credenciais do Chatguru não encontradas no .env")
-        return None # Retorna None em caso de erro
+        return None
 
     api = ChatguruWABA(chat_key, chat_account_id, chat_phone_id, chat_url)
     
@@ -87,13 +83,13 @@ def run_offer_workflow(chat_number, match_data, template_params):
     custom_fields = {"order_id": str(match_data.get('order_id')), "provider_id": str(match_data.get('provider_id'))}
     api.update_custom_fields(final_chat_number, custom_fields)
 
-    dialog_response = None # Inicializa a variável
+    dialog_response = None
     if DIALOG_ID_PARA_OFERTA:
         print(f"Etapa 3: Executando diálogo '{DIALOG_ID_PARA_OFERTA}'...")
         dialog_response = api.execute_dialog(final_chat_number, DIALOG_ID_PARA_OFERTA, template_params)
         print(f"Resposta da Execução do Diálogo para {final_chat_number}:", dialog_response)
     
-    return dialog_response # Retorna a resposta da API
+    return dialog_response
 
 def clean_and_format_phone(phone_number):
     """
@@ -121,6 +117,7 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
     offer_distance = city_config['offer_distance_km']
     max_unanswered = city_config['max_unanswered_offers']
     cooldown_hours = city_config['unanswered_cooldown_hours']
+    offer_all_offline = city_config.get('offer_to_all_city_offline', False) # Usar .get() para retrocompatibilidade
 
     print(f"\n--- PROCESSANDO CIDADE: {city_name} (ID: {city_id}) ---")
     print(f"Configurações: Limite Travada={stuck_threshold}min, MaxOfertas={max_offers}, Distância={offer_distance}km")
@@ -132,9 +129,17 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
         return
 
     online_providers_df = read_data_from_db(query_available_providers())
-    store_ids = stuck_orders_df['user_id'].unique().tolist()
-    offline_providers_df = read_data_from_db(query_offline_providers_with_history(store_ids))
     
+    # --- LÓGICA CONDICIONAL PARA BUSCAR PROVEDORES OFFLINE ---
+    if offer_all_offline:
+        print(f"INFO: {city_name} é uma cidade pequena. Buscando TODOS os entregadores offline da cidade.")
+        offline_providers_df = read_data_from_db(query_offline_providers_by_city(city_id))
+    else:
+        print(f"INFO: {city_name} é uma cidade grande. Buscando apenas entregadores offline com histórico na loja.")
+        store_ids = stuck_orders_df['user_id'].unique().tolist()
+        offline_providers_df = read_data_from_db(query_offline_providers_with_history(store_ids))
+    # --- FIM DA LÓGICA CONDICIONAL ---
+
     if online_providers_df is not None:
         online_providers_df['offer_priority'] = 1
     if offline_providers_df is not None:
@@ -142,6 +147,16 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
 
     providers_df = pd.concat([online_providers_df, offline_providers_df], ignore_index=True)
     
+    print("\nINFO: Verificando e removendo provedores que já estão em corridas ativas...")
+    busy_providers_df = read_data_from_db(query_providers_on_active_orders())
+    if busy_providers_df is not None and not busy_providers_df.empty:
+        busy_provider_ids = busy_providers_df['provider_id'].tolist()
+        initial_count = len(providers_df)
+        providers_df = providers_df[~providers_df['provider_id'].isin(busy_provider_ids)]
+        print(f"INFO: {len(busy_provider_ids)} provedores em corrida removidos. {initial_count} -> {len(providers_df)} provedores restantes.")
+    else:
+        print("INFO: Nenhum provedor em corrida ativa encontrado.")
+
     print("\nINFO: Buscando e removendo provedores fixos da lista de ofertas...")
     fixed_providers_df = read_data_from_db(query_fixed_providers())
     if fixed_providers_df is not None and not fixed_providers_df.empty:
@@ -244,9 +259,17 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
             if limit > 0:
                 best_matches_df = best_matches_df.head(limit)
             
+            sent_providers_this_run = set()
+            
             print(f"\nEncontrados {len(best_matches_df)} melhores provedores para {city_name}. A iniciar o fluxo de ofertas...")
             for index, match in best_matches_df.iterrows():
                 match_data = match.to_dict()
+                provider_id = match_data.get('provider_id')
+
+                if provider_id in sent_providers_this_run:
+                    print(f"INFO: Provedor {provider_id} já recebeu uma oferta nesta execução. Pulando para evitar spam.")
+                    continue
+
                 try:
                     param1 = match_data.get('param1_valor', '💰 Valor da Corrida: N/D')
                     param2 = match_data.get('param2_endereco', '📍 Endereço de Coleta: N/D')
@@ -264,6 +287,8 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
                     if recipient_phone_number:
                         dialog_response = run_offer_workflow(recipient_phone_number, match_data, template_params)
                         print("-" * 50)
+                        
+                        sent_providers_this_run.add(provider_id)
 
                         log_metadata = {
                             "distance_to_store_km": match_data.get('distance_km'),
