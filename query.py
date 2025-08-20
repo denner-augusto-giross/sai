@@ -461,3 +461,54 @@ def query_offers_sent_today():
             event_type = 'OFFER_SENT'
             AND event_timestamp >= CURDATE();
     """
+def query_sai_costs_daily():
+    """
+    Retorna uma query que conta os envios de ofertas do SAI por dia.
+    """
+    return """
+        SELECT
+            CAST(event_timestamp AS DATE) AS event_date,
+            'SAI_OFFER' AS source_application,
+            COUNT(*) AS message_count
+        FROM
+            desenvolvimento_bi.sai_event_log
+        WHERE
+            event_type = 'OFFER_SENT'
+            AND event_timestamp >= CURDATE() - INTERVAL 30 DAY -- Limita a 30 dias para performance
+        GROUP BY 1, 2;
+    """
+
+def query_tracking_link_costs_daily():
+    """
+    Retorna uma query que conta os envios de links de rastreio por dia.
+    """
+    return """
+        SELECT
+            CAST(created_at AS DATE) AS event_date,
+            'TRACKING_LINK' AS source_application,
+            COUNT(*) AS message_count
+        FROM
+            giross_producao.user_request_hash_links
+        WHERE
+            type = 'USER' 
+            AND sended_id IS NOT NULL
+            AND created_at >= CURDATE() - INTERVAL 30 DAY -- Limita a 30 dias para performance
+        GROUP BY 1, 2;
+    """
+
+def query_nps_costs_daily():
+    """
+    Retorna uma query que conta os envios de pesquisas NPS via Chatguru por dia.
+    """
+    return """
+        SELECT
+            CAST(created_at AS DATE) AS event_date,
+            'NPS_SURVEY' AS source_application,
+            COUNT(*) AS message_count
+        FROM
+            giross_producao.communication_dispatches
+        WHERE
+            api_name = 'chatguru'
+            AND created_at >= CURDATE() - INTERVAL 30 DAY -- Limita a 30 dias para performance
+        GROUP BY 1, 2;
+    """
