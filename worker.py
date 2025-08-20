@@ -11,7 +11,7 @@ from create_sent_offers_analytics import run_sent_offers_etl
 from log_unanswered_etl import run_log_unanswered_etl
 
 # --- CONFIGURAÇÕES DE CONTROLE DE CUSTO ---
-DAILY_SPEND_LIMIT_BRL = 40.00
+DAILY_SPEND_LIMIT_BRL = 60.00
 COST_PER_OFFER_BRL = 0.040
 # -----------------------------------------
 
