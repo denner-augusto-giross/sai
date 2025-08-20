@@ -34,7 +34,7 @@ def read_data_from_db(query: list):
 
     try:
         db.connect()
-        print("Successfully connected to the database!")
+        print("Successfully connected to the BANCO DE DADOS!")
 
         # Use pandas to read the data from the database
         # The db.connection() method gets the underlying DB-API 2 connection
