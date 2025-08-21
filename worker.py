@@ -13,7 +13,7 @@ from create_costs_analytics import run_costs_etl # <-- Linha Corrigida
 
 # --- CONFIGURAÇÕES DE CONTROLE DE CUSTO ---
 DAILY_SPEND_LIMIT_BRL = 60.00
-COST_PER_OFFER_BRL = 0.040
+COST_PER_OFFER_BRL = 0.046
 # -----------------------------------------
 
 def main():
