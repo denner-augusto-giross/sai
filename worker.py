@@ -9,7 +9,7 @@ from query import query_sai_city_configs, query_offers_sent_today
 from analytics_etl import run_analytics_etl
 from create_sent_offers_analytics import run_sent_offers_etl
 from log_unanswered_etl import run_log_unanswered_etl
-from create_costs_analytics import run_costs_etl
+from create_costs_analytics import run_costs_etl # <-- Linha Corrigida
 
 # --- CONFIGURAÇÕES DE CONTROLE DE CUSTO ---
 DAILY_SPEND_LIMIT_BRL = 60.00
@@ -70,7 +70,7 @@ def main():
                         update_city_last_run(city_id)
                         print(f">>> FINALIZADO SAI PARA: {city_name} <<<")
 
-            # --- LÓGICA DO GATILHO DE ETL (a cada uma hora) ---
+            # --- LÓGICA DO GATILHO DE ETL (uma vez por dia) ---
             now = datetime.now()
             if last_etl_run_time is None or (now - last_etl_run_time) > timedelta(hours=1):
                 print(f"\n--- {now.strftime('%Y-%m-%d %H:%M:%S')} - INICIANDO TAREFAS DE ETL DIÁRIAS ---")
@@ -97,11 +97,11 @@ def main():
                     print(f"ERRO no ETL de Ofertas Não Respondidas: {e}")
                 
                 try:
-                    print("\n-> Executando ETL de Custos diários de mensagens...")
+                    print("\n-> Executando ETL de Custos do WhatsApp...")
                     run_costs_etl()
-                    print("-> ETL de Custos diários de mensagens concluído.")
+                    print("-> ETL de Custos concluído.")
                 except Exception as e:
-                    print(f"ERRO no ETL de Custos diários de mensagens: {e}")
+                    print(f"ERRO no ETL de Custos: {e}")
 
                 last_etl_run_time = now
                 print("--- TAREFAS DE ETL DIÁRIAS CONCLUÍDAS. ---")
