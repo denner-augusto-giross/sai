@@ -10,7 +10,7 @@ import os
 
 # Define o nome da tabela de análise e o custo por mensagem
 ANALYTICS_TABLE_NAME = 'whatsapp_costs_daily'
-COST_PER_MESSAGE = 0.040
+COST_PER_MESSAGE = 0.046
 
 def run_costs_etl():
     """
