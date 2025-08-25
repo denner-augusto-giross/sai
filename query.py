@@ -6,13 +6,10 @@ def query_stuck_orders(city_id: int, stuck_threshold: int):
     cidade específica, usando um limite de tempo dinâmico.
     Nos domingos, inclui as corridas 'D+1'. Nos outros dias, as exclui.
     """
-    # Lógica para o filtro D+1
-    # datetime.weekday() retorna 6 para Domingo
     is_sunday = datetime.now().weekday() == 6
     
     d1_filter_clause = ""
     if not is_sunday:
-        # Se não for domingo, adiciona a cláusula para EXCLUIR as corridas D+1
         d1_filter_clause = "AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)"
 
     return f"""
@@ -311,7 +308,7 @@ def query_sai_city_configs():
             offer_distance_km,
             max_unanswered_offers,
             unanswered_cooldown_hours,
-            offer_to_all_city_offline, -- <-- NOVA COLUNA
+            offer_to_all_city_offline,
             is_active,
             last_run_timestamp
         FROM
@@ -361,46 +358,21 @@ def query_providers_on_unanswered_cooldown(max_unanswered: int, cooldown_hours: 
             AND last_offer_sent_time >= NOW() - INTERVAL {cooldown_hours} HOUR;
     """
 
-def query_unanswered_offers_to_log():
+def query_providers_on_active_orders():
     """
-    Retorna uma query que identifica pares (order_id, provider_id) de ofertas
-    enviadas que não foram respondidas e para as quais ainda não foi gerado
-    um log de 'UNANSWERED_OFFER'.
+    Retorna uma query que busca os IDs de todos os provedores que estão
+    atualmente atribuídos a uma corrida que NÃO está em um status final
+    (COMPLETED ou CANCELLED).
     """
     return """
-        WITH sent_pairs AS (
-            -- Seleciona todos os pares únicos (ordem, provedor) que receberam uma oferta
-            SELECT DISTINCT order_id, provider_id
-            FROM desenvolvimento_bi.sai_event_log
-            WHERE event_type = 'OFFER_SENT'
-        ),
-        responded_pairs AS (
-            -- Seleciona todos os pares únicos que tiveram uma resposta
-            SELECT DISTINCT order_id, provider_id
-            FROM desenvolvimento_bi.sai_event_log
-            WHERE event_type IN ('PROVIDER_ACCEPTED', 'PROVIDER_REJECTED')
-        ),
-        already_logged_unanswered AS (
-            -- Seleciona todos os pares que já foram logados como não respondidos
-            SELECT DISTINCT order_id, provider_id
-            FROM desenvolvimento_bi.sai_event_log
-            WHERE event_type = 'UNANSWERED_OFFER'
-        )
-        -- Seleciona os pares enviados que não estão na lista de respondidos
-        -- e que ainda não foram logados como não respondidos.
-        SELECT
-            s.order_id,
-            s.provider_id
-        FROM
-            sent_pairs s
-        LEFT JOIN
-            responded_pairs r ON s.order_id = r.order_id AND s.provider_id = r.provider_id
-        LEFT JOIN
-            already_logged_unanswered alu ON s.order_id = alu.order_id AND s.provider_id = alu.provider_id
-        WHERE
-            r.provider_id IS NULL -- Filtra apenas as que não tiveram resposta
-            AND alu.provider_id IS NULL; -- Filtra as que ainda não foram logadas
+        SELECT DISTINCT provider_id
+        FROM giross_producao.user_requests
+        WHERE 
+            status NOT IN ('COMPLETED', 'CANCELLED')
+            AND provider_id IS NOT NULL
+            AND provider_id > 0;
     """
+
 def query_offline_providers_by_city(city_id: int):
     """
     Retorna uma query que encontra TODOS os entregadores OFFLINE ou INATIVOS
@@ -435,32 +407,43 @@ def query_offline_providers_by_city(city_id: int):
             p.city_id = {city_id}
             AND ps.status IN ('inactive', 'offline');
     """
-def query_providers_on_active_orders():
+
+def query_unanswered_offers_to_log():
     """
-    Retorna uma query que busca os IDs de todos os provedores que estão
-    atualmente atribuídos a uma corrida que NÃO está em um status final
-    (COMPLETED ou CANCELLED).
-    """
-    return """
-        SELECT DISTINCT provider_id
-        FROM giross_producao.user_requests
-        WHERE 
-            status NOT IN ('COMPLETED', 'CANCELLED')
-            AND provider_id IS NOT NULL
-            AND provider_id > 0;
-    """
-def query_offers_sent_today():
-    """
-    Retorna uma query que conta o número total de eventos 'OFFER_SENT'
-    registrados no dia de hoje (a partir da meia-noite).
+    Retorna uma query que identifica pares (order_id, provider_id) de ofertas
+    enviadas que não foram respondidas e para as quais ainda não foi gerado
+    um log de 'UNANSWERED_OFFER'.
     """
     return """
-        SELECT COUNT(*) as offers_sent_today
-        FROM desenvolvimento_bi.sai_event_log
+        WITH sent_pairs AS (
+            SELECT DISTINCT order_id, provider_id
+            FROM desenvolvimento_bi.sai_event_log
+            WHERE event_type = 'OFFER_SENT'
+        ),
+        responded_pairs AS (
+            SELECT DISTINCT order_id, provider_id
+            FROM desenvolvimento_bi.sai_event_log
+            WHERE event_type IN ('PROVIDER_ACCEPTED', 'PROVIDER_REJECTED')
+        ),
+        already_logged_unanswered AS (
+            SELECT DISTINCT order_id, provider_id
+            FROM desenvolvimento_bi.sai_event_log
+            WHERE event_type = 'UNANSWERED_OFFER'
+        )
+        SELECT
+            s.order_id,
+            s.provider_id
+        FROM
+            sent_pairs s
+        LEFT JOIN
+            responded_pairs r ON s.order_id = r.order_id AND s.provider_id = r.provider_id
+        LEFT JOIN
+            already_logged_unanswered alu ON s.order_id = alu.order_id AND s.provider_id = alu.provider_id
         WHERE
-            event_type = 'OFFER_SENT'
-            AND event_timestamp >= CURDATE();
+            r.provider_id IS NULL
+            AND alu.provider_id IS NULL;
     """
+
 def query_sai_costs_daily():
     """
     Retorna uma query que conta os envios de ofertas do SAI por dia.
@@ -474,7 +457,7 @@ def query_sai_costs_daily():
             desenvolvimento_bi.sai_event_log
         WHERE
             event_type = 'OFFER_SENT'
-            AND event_timestamp >= CURDATE() - INTERVAL 30 DAY -- Limita a 30 dias para performance
+            AND event_timestamp >= CURDATE() - INTERVAL 30 DAY
         GROUP BY 1, 2;
     """
 
@@ -492,7 +475,7 @@ def query_tracking_link_costs_daily():
         WHERE
             type = 'USER' 
             AND sended_id IS NOT NULL
-            AND created_at >= CURDATE() - INTERVAL 30 DAY -- Limita a 30 dias para performance
+            AND created_at >= CURDATE() - INTERVAL 30 DAY
         GROUP BY 1, 2;
     """
 
@@ -509,6 +492,87 @@ def query_nps_costs_daily():
             giross_producao.communication_dispatches
         WHERE
             api_name = 'chatguru'
-            AND created_at >= CURDATE() - INTERVAL 30 DAY -- Limita a 30 dias para performance
+            AND created_at >= CURDATE() - INTERVAL 30 DAY
         GROUP BY 1, 2;
+    """
+
+def query_offers_sent_today():
+    """
+    Retorna uma query que conta o número total de eventos 'OFFER_SENT'
+    registrados no dia de hoje (a partir da meia-noite).
+    """
+    return """
+        SELECT COUNT(*) as offers_sent_today
+        FROM desenvolvimento_bi.sai_event_log
+        WHERE
+            event_type = 'OFFER_SENT'
+            AND event_timestamp >= CURDATE();
+    """
+
+# --- NOVAS QUERIES PARA O MODO PASSIVO ---
+
+def query_provider_by_phone(phone_number: str):
+    """
+    Retorna uma query que busca os detalhes de um provedor (ID, status, localização)
+    a partir do seu número de telefone.
+    """
+    return f"""
+        SELECT
+            p.id AS provider_id,
+            ps.status AS provider_status,
+            p.latitude AS provider_latitude,
+            p.longitude AS provider_longitude
+        FROM
+            giross_producao.providers p
+        JOIN
+            giross_producao.provider_services ps ON p.id = ps.provider_id
+        WHERE
+            p.mobile = '{phone_number}';
+    """
+
+def query_best_stuck_order_for_provider(provider_id: int, provider_lat: float, provider_lon: float):
+    """
+    Retorna uma query que encontra a melhor corrida travada para um provedor específico,
+    baseado na distância e nas regras de negócio.
+    """
+    return f"""
+        WITH
+        -- 1. Encontra todas as corridas travadas em cidades ativas, respeitando o tempo de cada uma
+        stuck_orders_in_active_cities AS (
+            SELECT
+                ur.id AS order_id,
+                ur.user_id,
+                ur.s_latitude AS store_latitude,
+                ur.s_longitude AS store_longitude
+            FROM
+                giross_producao.user_requests ur
+            JOIN
+                desenvolvimento_bi.sai_city_configs scc ON ur.city_id = scc.city_id
+            WHERE
+                ur.status = 'SEARCHING'
+                AND scc.is_active = TRUE
+                AND CASE
+                    WHEN ur.scheduled_cod IS NULL THEN TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW())
+                    ELSE TIMESTAMPDIFF(MINUTE, ur.started_at, NOW())
+                END >= scc.stuck_order_threshold_minutes
+        )
+        -- 2. Calcula a distância e aplica os filtros
+        SELECT
+            so.order_id,
+            so.user_id,
+            -- Fórmula Haversine para calcular a distância em KM
+            (6371 * ACOS(
+                COS(RADIANS({provider_lat})) * COS(RADIANS(so.store_latitude)) *
+                COS(RADIANS(so.store_longitude) - RADIANS({provider_lon})) +
+                SIN(RADIANS({provider_lat})) * SIN(RADIANS(so.store_latitude))
+            )) AS distance_km
+        FROM
+            stuck_orders_in_active_cities so
+        LEFT JOIN
+            giross_producao.user_provider_blocks upb ON so.user_id = upb.user_id AND upb.provider_id = {provider_id}
+        WHERE
+            upb.provider_id IS NULL -- Garante que o provedor não está bloqueado pela loja
+        ORDER BY
+            distance_km ASC -- Ordena pela menor distância
+        LIMIT 1; -- Retorna apenas a melhor opção
     """

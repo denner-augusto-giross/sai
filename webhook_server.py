@@ -1,19 +1,33 @@
 # webhook_server.py
 
 import os
+import pandas as pd
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from internal_api import login, assign_order
 from log_db import log_sai_event
 from datetime import datetime
 from db import read_data_from_db
-from query import query_order_status
+from query import query_order_status, query_provider_by_phone, query_best_stuck_order_for_provider
+from chatguru_api import ChatguruWABA
 
 load_dotenv()
 app = Flask(__name__)
 
 GIROSS_EMAIL = os.getenv("GIROSS_EMAIL")
 GIROSS_PASSWORD = os.getenv("GIROSS_PASSWORD")
+
+# --- Instancia a API do Chatguru para ser usada no modo passivo ---
+CHAT_GURU_KEY = os.getenv("CHAT_GURU_KEY")
+CHAT_GURU_ACCOUNT_ID = os.getenv("CHAT_GURU_ACCOUNT_ID")
+CHAT_GURU_PHONE_ID = os.getenv("CHAT_GURU_PHONE_ID")
+CHAT_GURU_URL = os.getenv("CHAT_GURU_URL")
+
+chat_api = None
+if all([CHAT_GURU_KEY, CHAT_GURU_ACCOUNT_ID, CHAT_GURU_PHONE_ID, CHAT_GURU_URL]):
+    chat_api = ChatguruWABA(CHAT_GURU_KEY, CHAT_GURU_ACCOUNT_ID, CHAT_GURU_PHONE_ID, CHAT_GURU_URL)
+else:
+    print("AVISO: Credenciais do Chatguru não configuradas. O modo passivo não poderá enviar respostas.")
 
 def find_next_provider_and_send_offer(order_id, rejected_provider_id):
     """Placeholder para a lógica de encontrar o próximo melhor provedor."""
@@ -94,6 +108,88 @@ def receive_message():
         
     return jsonify({"status": "success"}), 200
 
+@app.route('/request_order', methods=['POST'])
+def request_order():
+    """
+    Nova rota para o modo passivo. Recebe a solicitação de um entregador,
+    encontra a melhor corrida e a aloca.
+    """
+    print("\n" + "="*50)
+    print(f">>> ROTA /request_order (SAI PASSIVO) ACIONADA ÀS {datetime.now()} <<<")
+    
+    data = request.json
+    chat_number = data.get('chat_number')
+
+    if not chat_number:
+        print("ERRO: 'chat_number' não encontrado no webhook.")
+        return jsonify({"status": "error", "message": "Missing chat_number"}), 400
+
+    # 1. Identificar o entregador pelo telefone
+    provider_df = read_data_from_db(query_provider_by_phone(chat_number))
+
+    if provider_df is None or provider_df.empty:
+        print(f"ERRO: Nenhum provedor encontrado com o número {chat_number}.")
+        if chat_api:
+            chat_api.send_text_message(chat_number, "Desculpe, não conseguimos encontrar seu cadastro em nosso sistema.")
+        return jsonify({"status": "error", "message": "Provider not found"}), 404
+
+    provider_info = provider_df.iloc[0]
+    provider_id = int(provider_info['provider_id'])
+    
+    # 2. Validar se o entregador está apto a receber uma corrida
+    if provider_info['provider_status'] != 'active':
+        print(f"INFO: Provedor {provider_id} solicitou corrida, mas seu status é '{provider_info['provider_status']}'.")
+        log_sai_event(0, provider_id, 'PASSIVE_ASSIGNMENT_PROVIDER_NOT_ACTIVE')
+        if chat_api:
+            chat_api.send_text_message(chat_number, "Olá! Para buscar corridas, seu status precisa estar 'Online' no aplicativo. Por favor, fique online e tente novamente.")
+        return jsonify({"status": "success"}), 200
+
+    if pd.isna(provider_info['provider_latitude']) or pd.isna(provider_info['provider_longitude']):
+        print(f"ERRO: Provedor {provider_id} está sem dados de localização.")
+        log_sai_event(0, provider_id, 'PASSIVE_ASSIGNMENT_NO_LOCATION')
+        if chat_api:
+            chat_api.send_text_message(chat_number, "Não conseguimos encontrar sua localização atual. Por favor, verifique se o GPS está ativado e tente novamente.")
+        return jsonify({"status": "success"}), 200
+
+    # 3. Encontrar a melhor corrida para este entregador
+    print(f"INFO: Buscando a melhor corrida para o provedor {provider_id}...")
+    best_order_df = read_data_from_db(query_best_stuck_order_for_provider(
+        provider_id=provider_id,
+        provider_lat=provider_info['provider_latitude'],
+        provider_lon=provider_info['provider_longitude']
+    ))
+
+    # 4. Lógica de Alocação e Resposta
+    if best_order_df is None or best_order_df.empty:
+        print(f"INFO: Nenhuma corrida encontrada para o provedor {provider_id}.")
+        log_sai_event(0, provider_id, 'PASSIVE_ASSIGNMENT_NO_ORDER_FOUND')
+        if chat_api:
+            chat_api.send_text_message(chat_number, "Obrigado pela disponibilidade! No momento, não encontramos corridas travadas perto de você. Continue online!")
+    else:
+        best_order_info = best_order_df.iloc[0]
+        order_id = int(best_order_info['order_id'])
+        print(f"INFO: Melhor corrida encontrada: {order_id} (Distância: {best_order_info['distance_km']:.2f} km). Alocando...")
+
+        access_token = login(GIROSS_EMAIL, GIROSS_PASSWORD)
+        if access_token:
+            success = assign_order(access_token, provider_id, order_id)
+            if success:
+                print(f"SUCESSO: Corrida {order_id} alocada para o provedor {provider_id}.")
+                log_sai_event(order_id, provider_id, 'PASSIVE_ASSIGNMENT_SUCCESS')
+                if chat_api:
+                    chat_api.send_text_message(chat_number, f"✅ Ótima notícia! Alocamos a corrida #{order_id} para você. Por favor, verifique os detalhes no seu aplicativo.")
+            else:
+                print(f"FALHA: A API interna falhou ao tentar alocar a corrida {order_id} para o provedor {provider_id}.")
+                log_sai_event(order_id, provider_id, 'PASSIVE_ASSIGNMENT_FAILURE')
+                if chat_api:
+                    chat_api.send_text_message(chat_number, f"⚠️ Encontramos a corrida #{order_id}, mas ocorreu um erro ao tentar alocá-la. Por favor, tente novamente em alguns instantes.")
+        else:
+            print("ERRO: Falha no login da API interna. Não foi possível alocar a corrida.")
+            log_sai_event(order_id, provider_id, 'PASSIVE_ASSIGNMENT_LOGIN_FAILURE')
+            if chat_api:
+                chat_api.send_text_message(chat_number, "Ocorreu um erro interno em nosso sistema. Nossa equipe já foi notificada. Por favor, tente novamente mais tarde.")
+
+    return jsonify({"status": "success"}), 200
 if __name__ == '__main__':
     # Em produção, este script será executado pelo Docker/CapRover.
     # Para testes locais, pode usar o waitress:

@@ -67,12 +67,20 @@ class ChatguruWABA:
             "chat_number": chat_number,
         })
         
-        # --- INÍCIO DA CORREÇÃO ---
-        # Adiciona cada item do dicionário como um parâmetro separado
-        # Ex: {"valor_corrida": "10,00"} vira um parâmetro "valor_corrida=10,00"
-        if isinstance(template_params, list):
-            for i, param_value in enumerate(template_params):
-                params[f"param{i+1}"] = param_value
-        # --- FIM DA CORREÇÃO ---
+        if isinstance(template_params, dict):
+            for key, value in template_params.items():
+                params[key] = value
             
+        return self._send_request(params)
+
+    def send_text_message(self, chat_number, message_text):
+        """
+        Envia uma mensagem de texto simples para um chat existente.
+        """
+        params = self.base_params.copy()
+        params.update({
+            "action": "chat_send_message",
+            "chat_number": chat_number,
+            "text": message_text
+        })
         return self._send_request(params)
