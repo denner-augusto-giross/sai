@@ -6,10 +6,13 @@ def query_stuck_orders(city_id: int, stuck_threshold: int):
     cidade específica, usando um limite de tempo dinâmico.
     Nos domingos, inclui as corridas 'D+1'. Nos outros dias, as exclui.
     """
+    # Lógica para o filtro D+1
+    # datetime.weekday() retorna 6 para Domingo
     is_sunday = datetime.now().weekday() == 6
     
     d1_filter_clause = ""
     if not is_sunday:
+        # Se não for domingo, adiciona a cláusula para EXCLUIR as corridas D+1
         d1_filter_clause = "AND (ur.integration_service NOT LIKE '%d+1%' OR ur.integration_service IS NULL)"
 
     return f"""
@@ -513,19 +516,25 @@ def query_offers_sent_today():
 
 def query_provider_by_phone(phone_number: str):
     """
-    Retorna uma query que busca os detalhes de um provedor (ID, status, localização)
-    a partir do seu número de telefone.
+    Retorna uma query que busca os detalhes de um provedor a partir do seu
+    número de telefone. A query foi otimizada para verificar se o provedor
+    tem PELO MENOS UM serviço 'active'.
     """
     return f"""
         SELECT
             p.id AS provider_id,
-            ps.status AS provider_status,
             p.latitude AS provider_latitude,
-            p.longitude AS provider_longitude
+            p.longitude AS provider_longitude,
+            -- Usa uma subquery para determinar o status geral do provedor
+            (CASE 
+                WHEN EXISTS (
+                    SELECT 1 FROM giross_producao.provider_services ps 
+                    WHERE ps.provider_id = p.id AND ps.status = 'active'
+                ) THEN 'active'
+                ELSE 'offline'
+            END) AS provider_status
         FROM
             giross_producao.providers p
-        JOIN
-            giross_producao.provider_services ps ON p.id = ps.provider_id
         WHERE
             p.mobile = '{phone_number}';
     """

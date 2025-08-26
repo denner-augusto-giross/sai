@@ -269,32 +269,25 @@ def process_city_offers(city_config, test_number=None, print_dfs=False, limit=0)
                     continue
 
                 try:
-                    # --- INÍCIO DA CORREÇÃO: Montar uma LISTA com 4 parâmetros na ordem correta ---
-                    
+                    # --- INÍCIO DA CORREÇÃO: Montar um DICIONÁRIO com nomes de parâmetros ---
                     param1_raw = match_data.get('param1_valor', 'R$ N/D')
                     param2_raw = match_data.get('param2_endereco', 'Endereço: N/D')
                     
-                    # Parâmetro 1: Valor da Corrida
                     valor_corrida = param1_raw.split('R$ ')[-1].strip() if 'R$ ' in param1_raw else 'N/D'
-                    
-                    # Parâmetro 2: Endereço de Coleta
                     endereco_coleta = param2_raw.split('Coleta: ')[-1].strip() if 'Coleta: ' in param2_raw else 'N/D'
 
                     dist_to_store = match_data.get('distance_km', 0)
                     eta_to_store = int((dist_to_store / AVG_SPEED_KMH) * 60)
                     
-                    # Parâmetro 3: Distância até a Coleta
                     distancia_ate_loja = f"~{dist_to_store:.1f} km"
-                    
-                    # Parâmetro 4: Tempo Estimado até a Coleta
                     tempo_ate_loja = f"~{eta_to_store} min"
 
-                    template_params = [
-                        valor_corrida,
-                        endereco_coleta,
-                        distancia_ate_loja,
-                        tempo_ate_loja
-                    ]
+                    template_params = {
+                        "valor_corrida": valor_corrida,
+                        "endereco_coleta": endereco_coleta,
+                        "distancia_ate_loja": distancia_ate_loja,
+                        "tempo_ate_loja": tempo_ate_loja
+                    }
                     # --- FIM DA CORREÇÃO ---
                     
                     recipient_phone_number = test_number if test_number else match_data.get('mobile')

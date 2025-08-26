@@ -2,6 +2,7 @@
 
 import os
 import pandas as pd
+import json
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from internal_api import login, assign_order
@@ -17,7 +18,6 @@ app = Flask(__name__)
 GIROSS_EMAIL = os.getenv("GIROSS_EMAIL")
 GIROSS_PASSWORD = os.getenv("GIROSS_PASSWORD")
 
-# --- Instancia a API do Chatguru para ser usada no modo passivo ---
 CHAT_GURU_KEY = os.getenv("CHAT_GURU_KEY")
 CHAT_GURU_ACCOUNT_ID = os.getenv("CHAT_GURU_ACCOUNT_ID")
 CHAT_GURU_PHONE_ID = os.getenv("CHAT_GURU_PHONE_ID")
@@ -29,11 +29,25 @@ if all([CHAT_GURU_KEY, CHAT_GURU_ACCOUNT_ID, CHAT_GURU_PHONE_ID, CHAT_GURU_URL])
 else:
     print("AVISO: Credenciais do Chatguru não configuradas. O modo passivo não poderá enviar respostas.")
 
+def clean_and_format_phone(phone_number):
+    """
+    Limpa e formata um número de telefone brasileiro para o formato E.164.
+    """
+    if not phone_number or not isinstance(phone_number, str):
+        return None
+    cleaned_number = "".join(filter(str.isdigit, phone_number))
+    if cleaned_number.startswith('0'):
+        cleaned_number = cleaned_number[1:]
+    if cleaned_number.startswith('55'):
+        return cleaned_number[:13]
+    if len(cleaned_number) in [10, 11]:
+        return f"55{cleaned_number}"
+    return cleaned_number
+
 def find_next_provider_and_send_offer(order_id, rejected_provider_id):
     """Placeholder para a lógica de encontrar o próximo melhor provedor."""
     print(f"\nAVISO: O provedor {rejected_provider_id} rejeitou a ordem {order_id}.")
     print("A lógica para encontrar o próximo provedor precisa ser implementada aqui.")
-    # Em desenvolvimento
     pass
 
 @app.route('/webhook', methods=['POST'])
@@ -70,7 +84,6 @@ def receive_message():
         print(f"INFO: Provedor {provider_id_int} ACEITOU a ordem {order_id_int}.")
         log_sai_event(order_id_int, provider_id_int, 'PROVIDER_ACCEPTED')
         
-        # --- INÍCIO DA NOVA LÓGICA DE VERIFICAÇÃO ---
         print(f"INFO: Verificando o status atual da ordem {order_id_int} no banco de dados...")
         order_status_df = read_data_from_db(query_order_status(order_id_int))
 
@@ -81,14 +94,12 @@ def receive_message():
 
         current_provider_id = order_status_df.iloc[0]['provider_id']
 
-        # Verifica se a corrida já foi atribuída (provider_id diferente de 0 ou 1266)
         if current_provider_id not in [0, 1266]:
             print(f"INFO: A ordem {order_id_int} já foi atribuída ao provedor {current_provider_id}. Esta oferta não está mais disponível para o provedor {provider_id_int}.")
             log_sai_event(order_id_int, provider_id_int, 'ORDER_ALREADY_TAKEN')
             return jsonify({"status": "success", "message": "Order already assigned to another provider"}), 200
         
         print(f"INFO: A ordem {order_id_int} está disponível. Tentando atribuir ao provedor {provider_id_int}...")
-        # --- FIM DA NOVA LÓGICA DE VERIFICAÇÃO ---
 
         access_token = login(GIROSS_EMAIL, GIROSS_PASSWORD)
         
@@ -117,18 +128,32 @@ def request_order():
     print("\n" + "="*50)
     print(f">>> ROTA /request_order (SAI PASSIVO) ACIONADA ÀS {datetime.now()} <<<")
     
-    data = request.json
+    print(f"DEBUG: Corpo bruto da requisição: {request.get_data(as_text=True)}")
+    
+    data = request.get_json(silent=True)
+    if data is None:
+        try:
+            data = json.loads(request.get_data(as_text=True))
+        except (json.JSONDecodeError, TypeError):
+            print("ERRO: Falha ao decodificar o JSON do corpo da requisição.")
+            data = {}
+
     chat_number = data.get('chat_number')
 
     if not chat_number:
         print("ERRO: 'chat_number' não encontrado no webhook.")
         return jsonify({"status": "error", "message": "Missing chat_number"}), 400
 
-    # 1. Identificar o entregador pelo telefone
-    provider_df = read_data_from_db(query_provider_by_phone(chat_number))
+    # --- INÍCIO DA CORREÇÃO ---
+    # Padroniza o número de telefone antes de usá-lo na consulta
+    formatted_phone = clean_and_format_phone(chat_number)
+    print(f"INFO: Número original '{chat_number}' formatado para '{formatted_phone}'.")
+    # --- FIM DA CORREÇÃO ---
+
+    provider_df = read_data_from_db(query_provider_by_phone(formatted_phone))
 
     if provider_df is None or provider_df.empty:
-        print(f"ERRO: Nenhum provedor encontrado com o número {chat_number}.")
+        print(f"ERRO: Nenhum provedor encontrado com o número {formatted_phone}.")
         if chat_api:
             chat_api.send_text_message(chat_number, "Desculpe, não conseguimos encontrar seu cadastro em nosso sistema.")
         return jsonify({"status": "error", "message": "Provider not found"}), 404
