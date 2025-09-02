@@ -67,9 +67,11 @@ class ChatguruWABA:
             "chat_number": chat_number,
         })
         
-        if isinstance(template_params, dict):
-            for key, value in template_params.items():
-                params[key] = value
+        # Adiciona cada item do dicionário como um parâmetro separado
+        # Ex: {"valor_corrida": "10,00"} vira um parâmetro "valor_corrida=10,00"
+        if isinstance(template_params, list):
+            for i, param_value in enumerate(template_params):
+                params[f"param{i+1}"] = param_value
             
         return self._send_request(params)
 

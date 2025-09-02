@@ -9,27 +9,55 @@ from query import query_sai_city_configs, query_offers_sent_today
 from analytics_etl import run_analytics_etl
 from create_sent_offers_analytics import run_sent_offers_etl
 from log_unanswered_etl import run_log_unanswered_etl
-from create_costs_analytics import run_costs_etl # <-- Linha Corrigida
+from create_costs_analytics import run_costs_etl
+from email_checker import check_for_category_change_email
 
-# --- CONFIGURAÇÕES DE CONTROLE DE CUSTO ---
+# --- CONFIGURAÇÕES DE CONTROLO DE CUSTO ---
 DAILY_SPEND_LIMIT_BRL = 60.00
 COST_PER_OFFER_BRL = 0.046
 # -----------------------------------------
 
+# --- INTERRUPTOR DE SEGURANÇA GLOBAL ---
+# Esta variável será alterada para False se um e-mail de alerta for detetado.
+is_sai_enabled = True
+# ------------------------------------
+
 def main():
     """
-    Loop principal do worker. A cada minuto, verifica o limite de gastos,
-    processa cidades e executa tarefas de ETL diárias.
+    Loop principal do worker. A cada minuto, verifica o status de segurança,
+    o limite de gastos, processa cidades e executa tarefas de ETL diárias.
     """
+    global is_sai_enabled
     print(f"--- WORKER DO SAI INICIADO ÀS {datetime.now()} ---")
     print(f"INFO: Limite de gasto diário configurado para R$ {DAILY_SPEND_LIMIT_BRL:.2f}")
     
     last_etl_run_time = None
+    last_email_check_time = None
     
     while True:
         print(f"\n--- {datetime.now()}: Verificando ciclo de tarefas... ---")
         
         try:
+            # --- VERIFICAÇÃO DE E-MAIL (a cada hora) ---
+            now = datetime.now()
+            if last_email_check_time is None or (now - last_email_check_time) > timedelta(hours=1):
+                print("\nINFO: Executando verificação horária de e-mails de alerta da Meta...")
+                alert_found = check_for_category_change_email()
+                if alert_found:
+                    is_sai_enabled = False # Desativa o sistema
+                    print("ALERTA DE SEGURANÇA: O envio de ofertas foi DESATIVADO devido a um e-mail de mudança de categoria.")
+                
+                last_email_check_time = now
+            # --- FIM DA VERIFICAÇÃO DE E-MAIL ---
+
+            # --- VERIFICAÇÃO DO INTERRUPTOR DE SEGURANÇA ---
+            if not is_sai_enabled:
+                print("AVISO DE SEGURANÇA: O envio de ofertas ativas está DESATIVADO.")
+                print("--- Worker em modo de espera por 10 minutos. ---")
+                time.sleep(600)
+                continue # Pula para a próxima iteração do loop
+            # --- FIM DA VERIFICAÇÃO ---
+
             # --- VERIFICAÇÃO DE LIMITE DE GASTOS ---
             offers_count_df = read_log_data(query_offers_sent_today())
             offers_sent_today = 0
@@ -72,7 +100,7 @@ def main():
 
             # --- LÓGICA DO GATILHO DE ETL (uma vez por dia) ---
             now = datetime.now()
-            if last_etl_run_time is None or (now - last_etl_run_time) > timedelta(hours=1):
+            if last_etl_run_time is None or (now - last_etl_run_time) > timedelta(hours=24):
                 print(f"\n--- {now.strftime('%Y-%m-%d %H:%M:%S')} - INICIANDO TAREFAS DE ETL DIÁRIAS ---")
                 
                 try:
@@ -114,3 +142,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
