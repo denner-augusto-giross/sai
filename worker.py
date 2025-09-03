@@ -100,7 +100,7 @@ def main():
 
             # --- LÓGICA DO GATILHO DE ETL (uma vez por dia) ---
             now = datetime.now()
-            if last_etl_run_time is None or (now - last_etl_run_time) > timedelta(hours=24):
+            if last_etl_run_time is None or (now - last_etl_run_time) > timedelta(hours=1):
                 print(f"\n--- {now.strftime('%Y-%m-%d %H:%M:%S')} - INICIANDO TAREFAS DE ETL DIÁRIAS ---")
                 
                 try:
@@ -142,4 +142,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
