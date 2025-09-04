@@ -585,3 +585,83 @@ def query_best_stuck_order_for_provider(provider_id: int, provider_lat: float, p
             distance_km ASC -- Ordena pela menor distância
         LIMIT 1; -- Retorna apenas a melhor opção
     """
+
+def query_provider_by_id(provider_id: int):
+    """
+    Busca os detalhes de um entregador (status e localização) pelo seu ID.
+    A lógica de status prioriza 'active' se o entregador tiver múltiplos serviços.
+    """
+    return f"""
+        SELECT
+            p.id AS provider_id,
+            (CASE 
+                WHEN EXISTS (SELECT 1 FROM giross_producao.provider_services ps WHERE ps.provider_id = p.id AND ps.status = 'active') 
+                THEN 'active' 
+                ELSE MIN(ps_all.status) 
+            END) AS provider_status,
+            p.latitude AS provider_latitude,
+            p.longitude AS provider_longitude
+        FROM
+            giross_producao.providers p
+        LEFT JOIN
+            giross_producao.provider_services ps_all ON p.id = ps_all.provider_id
+        WHERE
+            p.id = {provider_id}
+        GROUP BY 
+            p.id, p.latitude, p.longitude;
+    """
+
+def query_best_stuck_order_for_provider(provider_id: int, provider_lat: float, provider_lon: float):
+    """
+    Encontra a melhor corrida travada para um entregador específico, aplicando todas as
+    regras de negócio e ordenando pela distância.
+    """
+    return f"""
+        WITH active_configs AS (
+            -- Busca todas as configurações ativas para saber os critérios de cada cidade
+            SELECT city_id, stuck_order_threshold_minutes, offer_distance_km
+            FROM desenvolvimento_bi.sai_city_configs
+            WHERE is_active = TRUE
+        ),
+        stuck_orders AS (
+            -- Encontra todas as corridas travadas em todas as cidades ativas
+            SELECT 
+                ur.id AS order_id,
+                ur.user_id,
+                ur.s_latitude,
+                ur.s_longitude,
+                ac.offer_distance_km
+            FROM
+                giross_producao.user_requests ur
+            JOIN 
+                active_configs ac ON ur.city_id = ac.city_id
+            WHERE
+                ur.status = 'SEARCHING'
+                AND ur.provider_id IN (0, 1266)
+                AND TIMESTAMPDIFF(MINUTE, ur.original_created_at, NOW()) >= ac.stuck_order_threshold_minutes
+        )
+        -- Seleciona e ranqueia as corridas elegíveis
+        SELECT
+            s.order_id,
+            (6371 * ACOS(
+                COS(RADIANS({provider_lat})) * COS(RADIANS(s.s_latitude)) *
+                COS(RADIANS(s.s_longitude) - RADIANS({provider_lon})) +
+                SIN(RADIANS({provider_lat})) * SIN(RADIANS(s.s_latitude))
+            )) AS distance_km
+        FROM
+            stuck_orders s
+        -- Filtro para remover corridas onde o entregador está bloqueado pela loja
+        LEFT JOIN 
+            giross_producao.user_provider_blocks b ON s.user_id = b.user_id AND b.provider_id = {provider_id}
+        WHERE
+            b.provider_id IS NULL -- Garante que não há bloqueio
+            -- Garante que a distância calculada está dentro do limite daquela cidade específica
+            AND (6371 * ACOS(
+                COS(RADIANS({provider_lat})) * COS(RADIANS(s.s_latitude)) *
+                COS(RADIANS(s.s_longitude) - RADIANS({provider_lon})) +
+                SIN(RADIANS({provider_lat})) * SIN(RADIANS(s.s_latitude))
+            )) <= s.offer_distance_km
+        ORDER BY
+            distance_km ASC
+        LIMIT 1;
+    """
